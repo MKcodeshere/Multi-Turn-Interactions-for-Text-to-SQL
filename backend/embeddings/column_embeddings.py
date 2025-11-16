@@ -98,9 +98,9 @@ class ColumnEmbeddingManager:
         formatted_results = []
         for doc in results:
             formatted_results.append({
-                'column': doc.metadata['column'],
-                'table': doc.metadata['table'],
-                'type': doc.metadata['type'],
+                'column_name': doc.metadata['column'],
+                'table_name': doc.metadata['table'],
+                'data_type': doc.metadata['type'],
                 'description': doc.metadata['description'],
                 'statistics': doc.metadata['statistics']
             })
