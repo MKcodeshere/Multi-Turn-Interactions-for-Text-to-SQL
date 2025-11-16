@@ -173,8 +173,13 @@ async def process_query(request: QueryRequest):
         if USE_LANGGRAPH:
             result = agent_workflow.query(request.question)
 
-            # Format intermediate steps from LangGraph
-            formatted_steps = result.get('intermediate_steps', [])
+            # Format intermediate steps from LangGraph to match frontend expectations
+            formatted_steps = []
+            for step in result.get('intermediate_steps', []):
+                formatted_steps.append({
+                    "tool": step.get("type", "ai"),  # Use type as tool name
+                    "output": step.get("step", "")   # Use step content as output
+                })
 
         else:
             # Use ReAct agent

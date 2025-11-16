@@ -94,6 +94,8 @@ class SQLAgentWorkflow:
         Analyze the question and create a plan
         Determines which tools/actions are needed
         """
+        print(f"\n🎯 [PLANNING] Analyzing question: {state['question']}")
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a SQL generation planner. Analyze the user's question and determine what steps are needed.
 
@@ -139,6 +141,9 @@ ACTIONS: <action1>, <action2>, <action3>"""),
                 actions = [a.strip() for a in actions_str.split(',')]
 
         # Update state flags based on required actions
+        print(f"   📋 Plan: {plan}")
+        print(f"   ✅ Required actions: {', '.join(actions)}")
+
         return {
             **state,
             "plan": plan,
@@ -155,6 +160,8 @@ ACTIONS: <action1>, <action2>, <action3>"""),
         """
         Search for relevant columns using semantic similarity
         """
+        print(f"\n🔍 [COLUMN SEARCH] Searching for relevant columns...")
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", """Based on the question and plan, identify what columns you need to search for.
 Provide 2-3 semantic descriptions of columns.
@@ -185,6 +192,8 @@ Provide column search queries as a comma-separated list:"""),
             for query, cols in results.items():
                 all_columns.extend(cols)
 
+            print(f"   ✅ Found {len(all_columns)} relevant columns")
+
             return {
                 **state,
                 "relevant_columns": all_columns,
@@ -199,6 +208,8 @@ Provide column search queries as a comma-separated list:"""),
         """
         Search for specific values in the database
         """
+        print(f"\n🔎 [VALUE SEARCH] Searching for specific values...")
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", """Based on the question, identify specific values to search for in the database.
 These could be names, IDs, or other specific entities.
@@ -224,6 +235,7 @@ Search values:"""),
         content = response.content.strip()
 
         if content == "NONE" or not content:
+            print(f"   ⏭️  Skipping value search (not needed)")
             return {
                 **state,
                 "needs_value_search": False,
@@ -243,7 +255,9 @@ Search values:"""),
                     results = search_tool._run(value)
                     all_results.extend(results)
                 except Exception as e:
-                    print(f"Value search error for '{value}': {e}")
+                    print(f"   ❌ Value search error for '{value}': {e}")
+
+        print(f"   ✅ Found {len(all_results)} relevant values")
 
         return {
             **state,
@@ -257,6 +271,8 @@ Search values:"""),
         """
         Find join paths between tables
         """
+        print(f"\n🗺️  [PATH FINDING] Finding join paths between tables...")
+
         # Extract unique tables from relevant columns
         tables = set()
         for col in state.get("relevant_columns", []):
@@ -265,6 +281,7 @@ Search values:"""),
 
         if len(tables) < 2:
             # No join needed - single table query
+            print(f"   ⏭️  Skipping path finding (single table query)")
             return {
                 **state,
                 "needs_path_finding": False,
@@ -285,7 +302,9 @@ Search values:"""),
                     )
                     paths.append(path)
                 except Exception as e:
-                    print(f"Path finding error: {e}")
+                    print(f"   ❌ Path finding error: {e}")
+
+        print(f"   ✅ Found {len(paths)} join paths")
 
         return {
             **state,
@@ -299,6 +318,8 @@ Search values:"""),
         """
         Generate SQL query based on gathered information
         """
+        print(f"\n💡 [SQL GENERATION] Generating SQL query...")
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an expert SQL query generator. Generate a SQL query to answer the question.
 
@@ -342,6 +363,8 @@ SQL Query:"""),
         elif sql_query.startswith("```"):
             sql_query = sql_query.replace("```", "").strip()
 
+        print(f"   ✅ Generated SQL: {sql_query[:100]}{'...' if len(sql_query) > 100 else ''}")
+
         return {
             **state,
             "sql_query": sql_query,
@@ -356,9 +379,12 @@ SQL Query:"""),
         """
         Execute the generated SQL query
         """
+        print(f"\n⚡ [SQL EXECUTION] Executing SQL query...")
+
         sql_query = state.get("sql_query", "")
 
         if not sql_query:
+            print(f"   ❌ No SQL query to execute")
             return {
                 **state,
                 "execution_error": "No SQL query to execute",
@@ -371,6 +397,8 @@ SQL Query:"""),
         if execute_tool:
             try:
                 result = execute_tool._run(sql_query)
+                print(f"   ✅ Query executed successfully")
+                print(f"   📊 Result preview: {str(result)[:150]}{'...' if len(str(result)) > 150 else ''}")
 
                 return {
                     **state,
@@ -381,6 +409,7 @@ SQL Query:"""),
                     "messages": [AIMessage(content=f"Query executed successfully. Result: {str(result)[:200]}")]
                 }
             except Exception as e:
+                print(f"   ❌ Execution error: {str(e)}")
                 return {
                     **state,
                     "execution_error": str(e),
@@ -395,6 +424,8 @@ SQL Query:"""),
         """
         Generate final answer based on execution results
         """
+        print(f"\n📝 [ANSWER GENERATION] Generating natural language answer...")
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", """Generate a natural language answer to the user's question based on the SQL execution result.
 
@@ -412,6 +443,9 @@ Provide a clear, concise answer:"""),
                 result=str(state.get("execution_result", ""))
             )
         )
+
+        print(f"   ✅ Answer generated")
+        print(f"   📋 Final answer: {response.content[:150]}{'...' if len(response.content) > 150 else ''}\n")
 
         return {
             **state,
@@ -552,6 +586,10 @@ Provide a clear, concise answer:"""),
         Returns:
             Dictionary with results and intermediate steps
         """
+        print(f"\n{'='*80}")
+        print(f"🚀 STARTING LANGGRAPH WORKFLOW")
+        print(f"{'='*80}")
+
         # Get schema summary
         schema_summary = self.database.get_schema_summary()
 
@@ -582,6 +620,10 @@ Provide a clear, concise answer:"""),
 
         # Run the workflow
         final_state = self.app.invoke(initial_state)
+
+        print(f"{'='*80}")
+        print(f"✅ WORKFLOW COMPLETED")
+        print(f"{'='*80}\n")
 
         # Format response
         return {
