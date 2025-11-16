@@ -129,7 +129,17 @@ function addAssistantMessage(data) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message assistant-message';
 
-    let html = `<p>${escapeHtml(data.answer)}</p>`;
+    let html = `<div class="answer-text">${escapeHtml(data.answer)}</div>`;
+
+    // Show plan if available
+    if (data.plan && data.plan.trim()) {
+        html += `
+            <div class="plan-display">
+                <strong>📋 Execution Plan</strong>
+                <p>${escapeHtml(data.plan)}</p>
+            </div>
+        `;
+    }
 
     // Show final SQL query
     if (data.final_sql) {
@@ -141,37 +151,170 @@ function addAssistantMessage(data) {
         `;
     }
 
-    // Show intermediate steps (collapsed by default)
-    if (data.intermediate_steps && data.intermediate_steps.length > 0) {
+    // Show detailed interaction steps
+    html += buildInteractionSteps(data);
+
+    messageDiv.innerHTML = html;
+    chatMessages.appendChild(messageDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Build detailed interaction steps with tables
+function buildInteractionSteps(data) {
+    let html = '';
+    const hasSteps = data.intermediate_steps && data.intermediate_steps.length > 0;
+    const hasColumns = data.relevant_columns && data.relevant_columns.length > 0;
+    const hasValues = data.relevant_values && data.relevant_values.length > 0;
+    const hasPaths = data.join_paths && data.join_paths.length > 0;
+
+    if (!hasSteps && !hasColumns && !hasValues && !hasPaths) {
+        return '';
+    }
+
+    html += `
+        <details style="margin-top: 15px;" open>
+            <summary style="cursor: pointer; color: var(--text-secondary); padding: 10px; font-weight: 600;">
+                🔍 View Detailed Interaction Steps
+            </summary>
+            <div class="interaction-steps">
+    `;
+
+    // Show relevant columns
+    if (hasColumns) {
+        const topColumns = data.relevant_columns.slice(0, 5);
+        const hasMore = data.relevant_columns.length > 5;
+
         html += `
-            <details style="margin-top: 15px;">
-                <summary style="cursor: pointer; color: var(--text-secondary); padding: 10px;">
-                    🔍 View Interaction Steps (${data.intermediate_steps.length})
-                </summary>
-                <div class="interaction-steps">
+            <div class="step">
+                <span class="step-tool">🎯 Relevant Columns Found</span>
+                <div class="step-content">
+                    <span class="step-badge">${data.relevant_columns.length} total columns</span>
+                    ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px;">(showing top 5)</span>` : ''}
+                </div>
+                <table class="step-table">
+                    <thead>
+                        <tr>
+                            <th>Table</th>
+                            <th>Column</th>
+                            <th>Similarity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${topColumns.map(col => `
+                            <tr>
+                                <td>${escapeHtml(col.table_name || '')}</td>
+                                <td>${escapeHtml(col.column_name || '')}</td>
+                                <td>${(col.similarity || 0).toFixed(3)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 5 of ${data.relevant_columns.length} columns')">View All ${data.relevant_columns.length} Columns</button>` : ''}
+            </div>
+        `;
+    }
+
+    // Show relevant values
+    if (hasValues) {
+        const topValues = data.relevant_values.slice(0, 3);
+        const hasMore = data.relevant_values.length > 3;
+
+        html += `
+            <div class="step">
+                <span class="step-tool">🔎 Relevant Values Found</span>
+                <div class="step-content">
+                    <span class="step-badge">${data.relevant_values.length} total values</span>
+                    ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px;">(showing top 3)</span>` : ''}
+                </div>
+                <table class="step-table">
+                    <thead>
+                        <tr>
+                            <th>Table</th>
+                            <th>Column</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${topValues.map(val => `
+                            <tr>
+                                <td>${escapeHtml(val.table_name || '')}</td>
+                                <td>${escapeHtml(val.column_name || '')}</td>
+                                <td>${escapeHtml(String(val.value || ''))}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 3 of ${data.relevant_values.length} values')">View All ${data.relevant_values.length} Values</button>` : ''}
+            </div>
+        `;
+    }
+
+    // Show join paths
+    if (hasPaths) {
+        const topPaths = data.join_paths.slice(0, 3);
+        const hasMore = data.join_paths.length > 3;
+
+        html += `
+            <div class="step">
+                <span class="step-tool">🔗 Join Paths Found</span>
+                <div class="step-content">
+                    <span class="step-badge">${data.join_paths.length} total paths</span>
+                    ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px;">(showing top 3)</span>` : ''}
+                </div>
+                <table class="step-table">
+                    <thead>
+                        <tr>
+                            <th>Path</th>
+                            <th>Tables</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${topPaths.map(path => `
+                            <tr>
+                                <td>
+                                    <div class="step-path">
+                                        ${escapeHtml(path.path ? path.path.join(' → ') : 'N/A')}
+                                    </div>
+                                </td>
+                                <td>${path.path ? path.path.length : 0}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 3 of ${data.join_paths.length} paths')">View All ${data.join_paths.length} Paths</button>` : ''}
+            </div>
+        `;
+    }
+
+    // Show text-based intermediate steps
+    if (hasSteps) {
+        html += `
+            <div class="step">
+                <span class="step-tool">📝 Processing Steps</span>
+                <div class="step-content">
         `;
 
         data.intermediate_steps.forEach((step, index) => {
             html += `
-                <div class="step">
-                    <span class="step-tool">Step ${index + 1}: ${step.tool}</span>
-                    <div style="margin-top: 5px; color: var(--text-secondary); font-size: 0.85em;">
-                        ${escapeHtml(String(step.output).substring(0, 200))}
-                        ${String(step.output).length > 200 ? '...' : ''}
-                    </div>
+                <div style="margin: 8px 0; padding: 8px; background: var(--code-bg); border-radius: 4px;">
+                    <strong style="color: var(--secondary-color);">Step ${index + 1}:</strong>
+                    ${escapeHtml(String(step.step || step.output || ''))}
                 </div>
             `;
         });
 
         html += `
                 </div>
-            </details>
+            </div>
         `;
     }
 
-    messageDiv.innerHTML = html;
-    chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    html += `
+            </div>
+        </details>
+    `;
+
+    return html;
 }
 
 // Set processing state

@@ -112,6 +112,10 @@ class QueryResponse(BaseModel):
     final_sql: Optional[str]
     sql_queries: List[str]
     intermediate_steps: List[Dict]
+    relevant_columns: Optional[List[Dict]] = []
+    relevant_values: Optional[List[Dict]] = []
+    join_paths: Optional[List[Dict]] = []
+    plan: Optional[str] = ""
 
 
 class SchemaResponse(BaseModel):
@@ -209,7 +213,11 @@ async def process_query(request: QueryRequest):
             answer=result.get('answer', 'An error occurred processing your query'),
             final_sql=result.get('final_sql', ''),
             sql_queries=result.get('sql_queries', []),
-            intermediate_steps=formatted_steps
+            intermediate_steps=formatted_steps,
+            relevant_columns=result.get('relevant_columns', []),
+            relevant_values=result.get('relevant_values', []),
+            join_paths=result.get('join_paths', []),
+            plan=result.get('plan', '')
         )
 
     except Exception as e:

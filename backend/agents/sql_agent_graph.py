@@ -1037,7 +1037,7 @@ Provide a clear, concise answer:"""),
         print(f"✅ WORKFLOW COMPLETED")
         print(f"{'='*80}\n")
 
-        # Format response
+        # Format response with detailed intermediate steps
         return {
             "question": question,
             "answer": final_state.get("final_answer", ""),
@@ -1045,6 +1045,9 @@ Provide a clear, concise answer:"""),
             "final_sql": final_state.get("sql_query", ""),
             "execution_result": final_state.get("execution_result"),
             "plan": final_state.get("plan", ""),
+            "relevant_columns": final_state.get("relevant_columns", []),
+            "relevant_values": final_state.get("relevant_values", []),
+            "join_paths": final_state.get("join_paths", []),
             "intermediate_steps": [
                 {
                     "step": msg.content,
