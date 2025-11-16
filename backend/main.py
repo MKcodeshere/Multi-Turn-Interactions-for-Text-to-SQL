@@ -118,7 +118,7 @@ async def read_root():
     """Serve the main HTML page"""
     frontend_path = Path(__file__).parent.parent / "frontend" / "index.html"
     if frontend_path.exists():
-        with open(frontend_path, 'r') as f:
+        with open(frontend_path, 'r', encoding='utf-8') as f:
             return f.read()
     return """
     <html>
