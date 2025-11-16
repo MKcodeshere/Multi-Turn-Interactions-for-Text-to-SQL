@@ -160,7 +160,14 @@ ACTIONS: <action1>, <action2>, <action3>"""),
         """
         Search for relevant columns using semantic similarity
         """
-        print(f"\n🔍 [COLUMN SEARCH] Searching for relevant columns...")
+        is_retry = state.get("execution_error", "") != ""
+        retry_context = f" (retry due to error)" if is_retry else ""
+        print(f"\n🔍 [COLUMN SEARCH] Searching for relevant columns...{retry_context}")
+
+        # Include error context if this is a retry
+        error_hint = ""
+        if is_retry:
+            error_hint = f"\n\nPrevious error: {state.get('execution_error', '')}\nPlease search for columns that might resolve this error."
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", """Based on the question and plan, identify what columns you need to search for.
@@ -168,6 +175,7 @@ Provide 2-3 semantic descriptions of columns.
 
 Question: {question}
 Plan: {plan}
+{error_hint}
 
 Provide column search queries as a comma-separated list:"""),
         ])
@@ -175,7 +183,8 @@ Provide column search queries as a comma-separated list:"""),
         response = self.llm.invoke(
             prompt.format_messages(
                 question=state["question"],
-                plan=state.get("plan", "")
+                plan=state.get("plan", ""),
+                error_hint=error_hint
             )
         )
 
@@ -198,8 +207,10 @@ Provide column search queries as a comma-separated list:"""),
                 **state,
                 "relevant_columns": all_columns,
                 "needs_column_search": False,
+                "needs_value_search": False,  # Skip value search on retry
+                "needs_path_finding": False,  # Skip path finding on retry
                 "current_step": "column_search_complete",
-                "messages": [AIMessage(content=f"Found {len(all_columns)} relevant columns")]
+                "messages": [AIMessage(content=f"Found {len(all_columns)} relevant columns (retry)")]
             }
 
         return {**state, "needs_column_search": False}
@@ -318,7 +329,13 @@ Search values:"""),
         """
         Generate SQL query based on gathered information
         """
-        print(f"\n💡 [SQL GENERATION] Generating SQL query...")
+        current_iteration = state.get("iteration", 0)
+        print(f"\n💡 [SQL GENERATION] Generating SQL query... (Attempt {current_iteration + 1}/{state.get('max_iterations', 3)})")
+
+        # If this is a retry, include the previous error in the prompt
+        error_context = ""
+        if state.get("execution_error"):
+            error_context = f"\nPrevious Error: {state.get('execution_error')}\nPlease fix the error in your SQL query."
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an expert SQL query generator. Generate a SQL query to answer the question.
@@ -337,8 +354,9 @@ Relevant Values:
 Join Paths:
 {paths}
 
-Previous SQL attempts:
+Previous SQL attempts and errors:
 {previous_sql}
+{error_context}
 
 Generate a valid SQL query. Output ONLY the SQL query, no explanations.
 SQL Query:"""),
@@ -351,7 +369,8 @@ SQL Query:"""),
                 columns=str(state.get("relevant_columns", []))[:1000],
                 values=str(state.get("relevant_values", []))[:500],
                 paths=str(state.get("join_paths", []))[:500],
-                previous_sql="\n".join(state.get("sql_queries", []))
+                previous_sql="\n".join(state.get("sql_queries", [])),
+                error_context=error_context
             )
         )
 
@@ -371,8 +390,9 @@ SQL Query:"""),
             "sql_queries": [sql_query],
             "needs_sql_generation": False,
             "ready_to_execute": True,
+            "iteration": current_iteration + 1,  # Increment iteration counter
             "current_step": "sql_generated",
-            "messages": [AIMessage(content=f"Generated SQL: {sql_query}")]
+            "messages": [AIMessage(content=f"Generated SQL (Attempt {current_iteration + 1}): {sql_query}")]
         }
 
     def sql_execution_node(self, state: AgentState) -> AgentState:
@@ -397,6 +417,22 @@ SQL Query:"""),
         if execute_tool:
             try:
                 result = execute_tool._run(sql_query)
+
+                # Check if result contains an error message
+                result_str = str(result)
+                if "Error:" in result_str or "error:" in result_str.lower():
+                    print(f"   ❌ SQL execution returned error")
+                    print(f"   📊 Error: {result_str[:150]}{'...' if len(result_str) > 150 else ''}")
+
+                    return {
+                        **state,
+                        "execution_result": None,
+                        "execution_error": result_str,
+                        "ready_to_execute": False,
+                        "current_step": "execution_failed",
+                        "messages": [AIMessage(content=f"SQL execution error: {result_str}")]
+                    }
+
                 print(f"   ✅ Query executed successfully")
                 print(f"   📊 Result preview: {str(result)[:150]}{'...' if len(str(result)) > 150 else ''}")
 
@@ -482,14 +518,30 @@ Provide a clear, concise answer:"""),
             return "execute_sql"
         return "answer"
 
-    def should_retry_or_finish(self, state: AgentState) -> Literal["generate_sql", "answer", END]:
-        """Decide if we should retry SQL generation or finish"""
-        # If execution failed and we haven't exceeded max iterations, retry
-        if state.get("execution_error") and state.get("iteration", 0) < state.get("max_iterations", 3):
-            return "generate_sql"
+    def should_retry_or_finish(self, state: AgentState) -> Literal["search_columns", "generate_sql", "answer", END]:
+        """Decide if we should retry SQL generation, re-search columns, or finish"""
+        execution_error = state.get("execution_error", "")
+        current_iteration = state.get("iteration", 0)
+        max_iterations = state.get("max_iterations", 3)
+
+        # If execution failed and we haven't exceeded max iterations
+        if execution_error and current_iteration < max_iterations:
+            # If it's a "no such column" error, re-search columns
+            if "no such column" in execution_error.lower():
+                print(f"   🔄 Retrying with column re-search due to column error")
+                return "search_columns"
+            else:
+                # For other errors, just regenerate SQL
+                print(f"   🔄 Retrying SQL generation (Attempt {current_iteration + 1}/{max_iterations})")
+                return "generate_sql"
 
         # If we have a result, generate answer
         if state.get("execution_result"):
+            return "answer"
+
+        # If we've exceeded max iterations, still generate an answer explaining the failure
+        if execution_error:
+            print(f"   ⚠️  Max iterations reached. Generating error response.")
             return "answer"
 
         # Otherwise end
@@ -561,7 +613,8 @@ Provide a clear, concise answer:"""),
             "execute_sql",
             self.should_retry_or_finish,
             {
-                "generate_sql": "generate_sql",  # Retry
+                "search_columns": "search_columns",  # Re-search columns on column errors
+                "generate_sql": "generate_sql",  # Retry SQL generation
                 "answer": "answer",
                 END: END
             }
