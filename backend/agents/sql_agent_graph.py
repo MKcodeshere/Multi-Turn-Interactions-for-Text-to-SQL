@@ -58,6 +58,12 @@ class AgentState(TypedDict):
     needs_sql_generation: bool
     ready_to_execute: bool
 
+    # Human interaction (multi-turn)
+    needs_human_input: bool
+    human_feedback: str
+    awaiting_confirmation: bool
+    confirmation_type: str  # 'plan', 'sql', 'error'
+
     # Final output
     final_answer: str
     messages: Annotated[List[Any], operator.add]  # Conversation history
@@ -73,9 +79,10 @@ class SQLAgentWorkflow:
     Implements nodes and edges for multi-turn interaction
     """
 
-    def __init__(self, tools: List, database):
+    def __init__(self, tools: List, database, enable_human_interaction: bool = False):
         self.tools = {tool.name: tool for tool in tools}
         self.database = database
+        self.enable_human_interaction = enable_human_interaction
         self.llm = ChatOpenAI(
             model=LLM_MODEL,
             temperature=LLM_TEMPERATURE
@@ -153,12 +160,15 @@ ACTIONS: <action1>, <action2>, <action3>"""),
             "needs_path_finding": "FindShortestPath" in actions,
             "needs_sql_generation": True,  # Always need to generate SQL
             "current_step": "planning_complete",
+            "awaiting_confirmation": True,  # Wait for human confirmation
+            "confirmation_type": "plan",
             "messages": [AIMessage(content=f"Plan: {plan}\nRequired actions: {', '.join(actions)}")]
         }
 
     def column_search_node(self, state: AgentState) -> AgentState:
         """
         Search for relevant columns using semantic similarity
+        Falls back to showing all columns if not enough results found
         """
         is_retry = state.get("execution_error", "") != ""
         retry_context = f" (retry due to error)" if is_retry else ""
@@ -193,13 +203,33 @@ Provide column search queries as a comma-separated list:"""),
 
         # Execute search using the tool
         search_tool = self.tools.get("SearchColumn")
+        all_columns = []
+
         if search_tool:
-            results = search_tool._run(queries, k=5)
+            results = search_tool._run(queries, k=10)
 
             # Flatten results
-            all_columns = []
             for query, cols in results.items():
                 all_columns.extend(cols)
+
+            # Fallback: If we didn't find enough columns, get all columns from relevant tables
+            if len(all_columns) < 3:
+                print(f"   ⚠️  Found only {len(all_columns)} columns, fetching all columns as fallback")
+
+                # Get all columns from database
+                all_db_columns = self.database.get_all_columns()
+
+                # Convert to the format expected by the workflow
+                for col_info in all_db_columns[:50]:  # Limit to 50 columns to avoid overwhelming the LLM
+                    stats = self.database.get_column_statistics(col_info['table'], col_info['column'])
+                    all_columns.append({
+                        'table_name': col_info['table'],
+                        'column_name': col_info['column'],
+                        'data_type': col_info['type'],
+                        'statistics': stats
+                    })
+
+                print(f"   ℹ️  Showing all columns (fallback): {len(all_columns)} total")
 
             print(f"   ✅ Found {len(all_columns)} relevant columns")
 
@@ -207,10 +237,10 @@ Provide column search queries as a comma-separated list:"""),
                 **state,
                 "relevant_columns": all_columns,
                 "needs_column_search": False,
-                "needs_value_search": False,  # Skip value search on retry
-                "needs_path_finding": False,  # Skip path finding on retry
+                "needs_value_search": False if is_retry else state.get("needs_value_search", True),
+                "needs_path_finding": False if is_retry else state.get("needs_path_finding", True),
                 "current_step": "column_search_complete",
-                "messages": [AIMessage(content=f"Found {len(all_columns)} relevant columns (retry)")]
+                "messages": [AIMessage(content=f"Found {len(all_columns)} relevant columns")]
             }
 
         return {**state, "needs_column_search": False}
@@ -389,7 +419,9 @@ SQL Query:"""),
             "sql_query": sql_query,
             "sql_queries": [sql_query],
             "needs_sql_generation": False,
-            "ready_to_execute": True,
+            "ready_to_execute": False,  # Don't execute immediately
+            "awaiting_confirmation": True,  # Wait for human confirmation
+            "confirmation_type": "sql",
             "iteration": current_iteration + 1,  # Increment iteration counter
             "current_step": "sql_generated",
             "messages": [AIMessage(content=f"Generated SQL (Attempt {current_iteration + 1}): {sql_query}")]
@@ -458,41 +490,105 @@ SQL Query:"""),
 
     def answer_generation_node(self, state: AgentState) -> AgentState:
         """
-        Generate final answer based on execution results
+        Generate final answer based on execution results or error
+        Handles both successful queries and errors gracefully
         """
         print(f"\n📝 [ANSWER GENERATION] Generating natural language answer...")
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """Generate a natural language answer to the user's question based on the SQL execution result.
+        # Check if we have an error instead of a result
+        execution_error = state.get("execution_error", "")
+        execution_result = state.get("execution_result")
+
+        if execution_error and not execution_result:
+            # Generate error response
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", """The SQL query execution failed after multiple attempts.
+Provide a helpful error message to the user explaining what went wrong and suggest how they might rephrase their question.
+
+Question: {question}
+Error: {error}
+SQL Attempts: {sql_queries}
+
+Generate a user-friendly error message:"""),
+            ])
+
+            response = self.llm.invoke(
+                prompt.format_messages(
+                    question=state["question"],
+                    error=execution_error,
+                    sql_queries="\n".join(state.get("sql_queries", []))
+                )
+            )
+
+            print(f"   ⚠️  Error response generated")
+            print(f"   📋 Error message: {response.content[:150]}{'...' if len(response.content) > 150 else ''}\n")
+
+            return {
+                **state,
+                "final_answer": f"I encountered an error: {response.content}",
+                "current_step": "complete_with_error",
+                "messages": [AIMessage(content=response.content)]
+            }
+        else:
+            # Generate success response
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", """Generate a natural language answer to the user's question based on the SQL execution result.
 
 Question: {question}
 SQL Query: {sql_query}
 Result: {result}
 
 Provide a clear, concise answer:"""),
-        ])
+            ])
 
-        response = self.llm.invoke(
-            prompt.format_messages(
-                question=state["question"],
-                sql_query=state.get("sql_query", ""),
-                result=str(state.get("execution_result", ""))
+            response = self.llm.invoke(
+                prompt.format_messages(
+                    question=state["question"],
+                    sql_query=state.get("sql_query", ""),
+                    result=str(execution_result if execution_result else "No results found")
+                )
             )
-        )
 
-        print(f"   ✅ Answer generated")
-        print(f"   📋 Final answer: {response.content[:150]}{'...' if len(response.content) > 150 else ''}\n")
+            print(f"   ✅ Answer generated")
+            print(f"   📋 Final answer: {response.content[:150]}{'...' if len(response.content) > 150 else ''}\n")
 
+            return {
+                **state,
+                "final_answer": response.content,
+                "current_step": "complete",
+                "messages": [AIMessage(content=response.content)]
+            }
+
+    def human_interaction_node(self, state: AgentState) -> AgentState:
+        """
+        Checkpoint for human interaction
+        Pauses execution and waits for human input/confirmation
+        """
+        confirmation_type = state.get("confirmation_type", "")
+
+        print(f"\n👤 [HUMAN INTERACTION] Requesting {confirmation_type} confirmation...")
+        print(f"   ⏸️  Workflow paused - awaiting human input")
+
+        # This node just marks that we're waiting for human input
+        # The actual interaction happens through the API
         return {
             **state,
-            "final_answer": response.content,
-            "current_step": "complete",
-            "messages": [AIMessage(content=response.content)]
+            "needs_human_input": True,
+            "current_step": f"awaiting_{confirmation_type}_confirmation",
+            "messages": [AIMessage(content=f"Awaiting human confirmation for {confirmation_type}")]
         }
 
     # ========================================================================
     # CONDITIONAL EDGES (ROUTING LOGIC)
     # ========================================================================
+
+    def should_request_confirmation(self, state: AgentState) -> Literal["human_interaction", "check_column_search"]:
+        """Decide if we need human confirmation after planning"""
+        if (self.enable_human_interaction and
+            state.get("awaiting_confirmation", False) and
+            state.get("confirmation_type") == "plan"):
+            return "human_interaction"
+        return "check_column_search"
 
     def should_search_columns(self, state: AgentState) -> Literal["search_columns", "check_value_search"]:
         """Decide if we need to search for columns"""
@@ -512,20 +608,38 @@ Provide a clear, concise answer:"""),
             return "find_paths"
         return "generate_sql"
 
+    def should_confirm_sql(self, state: AgentState) -> Literal["human_interaction", "execute_sql"]:
+        """Decide if we need human confirmation before SQL execution"""
+        if (self.enable_human_interaction and
+            state.get("awaiting_confirmation", False) and
+            state.get("confirmation_type") == "sql"):
+            return "human_interaction"
+        # If no interaction needed, mark as ready to execute
+        state["ready_to_execute"] = True
+        return "execute_sql"
+
     def should_execute_sql(self, state: AgentState) -> Literal["execute_sql", "answer"]:
         """Decide if SQL is ready to execute"""
         if state.get("ready_to_execute", False):
             return "execute_sql"
         return "answer"
 
-    def should_retry_or_finish(self, state: AgentState) -> Literal["search_columns", "generate_sql", "answer", END]:
-        """Decide if we should retry SQL generation, re-search columns, or finish"""
+    def should_retry_or_finish(self, state: AgentState) -> Literal["search_columns", "generate_sql", "human_interaction", "answer", END]:
+        """Decide if we should retry SQL generation, request human help, or finish"""
         execution_error = state.get("execution_error", "")
         current_iteration = state.get("iteration", 0)
         max_iterations = state.get("max_iterations", 3)
 
         # If execution failed and we haven't exceeded max iterations
         if execution_error and current_iteration < max_iterations:
+            # If we're on the last iteration before max, request human help if enabled
+            if self.enable_human_interaction and current_iteration == max_iterations - 1:
+                print(f"   👤 Requesting human help after {current_iteration} failed attempts")
+                # Mark state for human interaction
+                state["awaiting_confirmation"] = True
+                state["confirmation_type"] = "error"
+                return "human_interaction"
+
             # If it's a "no such column" error, re-search columns
             if "no such column" in execution_error.lower():
                 print(f"   🔄 Retrying with column re-search due to column error")
@@ -554,12 +668,14 @@ Provide a clear, concise answer:"""),
     def _build_graph(self) -> StateGraph:
         """
         Build the LangGraph workflow with nodes and edges
+        Includes human interaction checkpoints for true multi-turn interaction
         """
         # Initialize the graph with our state schema
         workflow = StateGraph(AgentState)
 
         # Add nodes
         workflow.add_node("planning", self.planning_node)
+        workflow.add_node("human_interaction", self.human_interaction_node)
         workflow.add_node("search_columns", self.column_search_node)
         workflow.add_node("search_values", self.value_search_node)
         workflow.add_node("find_paths", self.path_finding_node)
@@ -571,8 +687,19 @@ Provide a clear, concise answer:"""),
         workflow.set_entry_point("planning")
 
         # Add conditional edges (routing logic)
+        # After planning, check if we need human confirmation
         workflow.add_conditional_edges(
             "planning",
+            self.should_request_confirmation,
+            {
+                "human_interaction": "human_interaction",
+                "check_column_search": "search_columns"  # Skip to column search if no confirmation needed
+            }
+        )
+
+        # After human confirms plan, proceed to column search
+        workflow.add_conditional_edges(
+            "human_interaction",
             self.should_search_columns,
             {
                 "search_columns": "search_columns",
@@ -600,12 +727,13 @@ Provide a clear, concise answer:"""),
 
         workflow.add_edge("find_paths", "generate_sql")
 
+        # After SQL generation, request human confirmation before execution
         workflow.add_conditional_edges(
             "generate_sql",
-            self.should_execute_sql,
+            self.should_confirm_sql,
             {
-                "execute_sql": "execute_sql",
-                "answer": "answer"
+                "human_interaction": "human_interaction",
+                "execute_sql": "execute_sql"
             }
         )
 
@@ -615,6 +743,7 @@ Provide a clear, concise answer:"""),
             {
                 "search_columns": "search_columns",  # Re-search columns on column errors
                 "generate_sql": "generate_sql",  # Retry SQL generation
+                "human_interaction": "human_interaction",  # Request human help on errors
                 "answer": "answer",
                 END: END
             }
@@ -667,6 +796,10 @@ Provide a clear, concise answer:"""),
             "needs_path_finding": False,
             "needs_sql_generation": False,
             "ready_to_execute": False,
+            "needs_human_input": False,
+            "human_feedback": "",
+            "awaiting_confirmation": False,
+            "confirmation_type": "",
             "final_answer": "",
             "messages": []
         }

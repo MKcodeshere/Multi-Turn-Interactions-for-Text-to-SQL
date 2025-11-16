@@ -5,6 +5,7 @@ import sqlite3
 from typing import List, Dict, Any, Tuple
 from pathlib import Path
 import networkx as nx
+from rank_bm25 import BM25Okapi
 from backend.config import DATABASE_PATH
 
 
@@ -186,13 +187,17 @@ class Database:
             conn.close()
 
     def search_values(self, query: str, table: str = None, column: str = None, limit: int = 5) -> List[Dict]:
-        """Search for values in the database (simple implementation without Elasticsearch)"""
+        """
+        Search for values in the database using BM25 ranking
+        Implements the BM25 algorithm from the paper for better semantic matching
+        """
         conn = self.get_connection()
         cursor = conn.cursor()
-        results = []
+        all_candidates = []
 
         tables_to_search = [table] if table else self.get_tables()
 
+        # Collect all candidate values from text columns
         for tbl in tables_to_search:
             columns = self.get_columns(tbl)
             columns_to_search = [column] if column else [c['name'] for c in columns]
@@ -208,30 +213,66 @@ class Database:
                     continue
 
                 try:
+                    # Get all distinct values from the column
                     cursor.execute(f"""
                         SELECT DISTINCT {col}
                         FROM {tbl}
-                        WHERE {col} LIKE ? AND {col} IS NOT NULL
-                        LIMIT {limit}
-                    """, (f"%{query}%",))
+                        WHERE {col} IS NOT NULL AND {col} != ''
+                        LIMIT 1000
+                    """)
 
                     for row in cursor.fetchall():
-                        results.append({
-                            'contents': row[0],
-                            'table': tbl,
-                            'column': col
-                        })
-
-                    if len(results) >= limit:
-                        break
+                        value = str(row[0])
+                        # Add both exact match and BM25 candidates
+                        if query.lower() in value.lower():
+                            all_candidates.append({
+                                'contents': value,
+                                'table': tbl,
+                                'column': col,
+                                'text': value
+                            })
                 except Exception:
                     continue
 
-            if len(results) >= limit:
-                break
-
         conn.close()
-        return results[:limit]
+
+        # If no candidates found, return empty
+        if not all_candidates:
+            return []
+
+        # If we have candidates, rank them using BM25
+        if len(all_candidates) > 0:
+            # Tokenize all candidate texts
+            tokenized_corpus = [doc['text'].lower().split() for doc in all_candidates]
+
+            # Create BM25 instance
+            bm25 = BM25Okapi(tokenized_corpus)
+
+            # Tokenize query
+            tokenized_query = query.lower().split()
+
+            # Get BM25 scores
+            scores = bm25.get_scores(tokenized_query)
+
+            # Add scores to candidates and sort
+            for i, candidate in enumerate(all_candidates):
+                candidate['score'] = scores[i]
+
+            # Sort by score (descending)
+            all_candidates.sort(key=lambda x: x['score'], reverse=True)
+
+            # Remove the 'text' and 'score' fields before returning
+            results = []
+            for candidate in all_candidates[:limit]:
+                results.append({
+                    'contents': candidate['contents'],
+                    'table': candidate['table'],
+                    'column': candidate['column']
+                })
+
+            return results
+
+        return all_candidates[:limit]
 
     def get_schema_summary(self) -> str:
         """Get a summary of the database schema"""

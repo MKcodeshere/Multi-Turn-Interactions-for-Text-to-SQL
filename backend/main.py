@@ -57,10 +57,17 @@ async def lifespan(app: FastAPI):
         ExecuteSQLTool(database=db)
     ]
 
+    # Check if human interaction is enabled
+    enable_interaction = os.getenv("ENABLE_HUMAN_INTERACTION", "false").lower() == "true"
+
     # Initialize agent (choose between LangGraph and ReAct)
     if USE_LANGGRAPH:
-        agent_workflow = SQLAgentWorkflow(tools=tools, database=db)
-        print("✓ LangGraph SQL Workflow initialized")
+        agent_workflow = SQLAgentWorkflow(
+            tools=tools,
+            database=db,
+            enable_human_interaction=enable_interaction
+        )
+        print(f"✓ LangGraph SQL Workflow initialized (human interaction: {enable_interaction})")
     else:
         agent = SQLAgent(tools=tools, database=db)
         print("✓ ReAct SQL Agent initialized")
@@ -195,16 +202,33 @@ async def process_query(request: QueryRequest):
                     "output": str(observation)[:500]  # Limit output length
                 })
 
+        # Always return a valid response, even if there was an error
+        # The error is communicated through the answer field
         return QueryResponse(
-            question=result['question'],
-            answer=result['answer'],
-            final_sql=result['final_sql'],
-            sql_queries=result['sql_queries'],
+            question=result.get('question', request.question),
+            answer=result.get('answer', 'An error occurred processing your query'),
+            final_sql=result.get('final_sql', ''),
+            sql_queries=result.get('sql_queries', []),
             intermediate_steps=formatted_steps
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query processing error: {str(e)}")
+        # Log the error but return a proper response instead of 500
+        print(f"Error processing query: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        # Return a user-friendly error response
+        return QueryResponse(
+            question=request.question,
+            answer=f"I encountered an unexpected error while processing your query: {str(e)}. Please try rephrasing your question or contact support if the issue persists.",
+            final_sql=None,
+            sql_queries=[],
+            intermediate_steps=[{
+                "tool": "error",
+                "output": str(e)
+            }]
+        )
 
 
 @app.get("/api/health")
