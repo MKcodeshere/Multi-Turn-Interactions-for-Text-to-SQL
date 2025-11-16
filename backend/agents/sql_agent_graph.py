@@ -357,7 +357,14 @@ Search values:"""),
             for value in values[:3]:  # Limit to 3 searches
                 try:
                     results = search_tool._run(value)
-                    all_results.extend(results)
+                    # Normalize field names to match frontend expectations
+                    for result in results:
+                        normalized_result = {
+                            'table_name': result.get('table', ''),
+                            'column_name': result.get('column', ''),
+                            'value': result.get('contents', '')
+                        }
+                        all_results.append(normalized_result)
                 except Exception as e:
                     print(f"   ❌ Value search error for '{value}': {e}")
 
