@@ -45,16 +45,29 @@ def load_column_descriptions():
         table_name = csv_file.stem
         COLUMN_DESCRIPTIONS[table_name] = {}
 
-        with open(csv_file, 'r', encoding='utf-8') as f:
-            import csv
-            reader = csv.DictReader(f)
-            for row in reader:
-                column_name = row.get('column_name', '').strip()
-                if column_name:
-                    COLUMN_DESCRIPTIONS[table_name][column_name] = {
-                        'description': row.get('column_description', ''),
-                        'format': row.get('data_format', ''),
-                        'value_description': row.get('value_description', '')
-                    }
+        # Try multiple encodings to handle different file formats
+        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
+        content_loaded = False
+
+        for encoding in encodings:
+            try:
+                with open(csv_file, 'r', encoding=encoding) as f:
+                    import csv
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        column_name = row.get('column_name', '').strip()
+                        if column_name:
+                            COLUMN_DESCRIPTIONS[table_name][column_name] = {
+                                'description': row.get('column_description', ''),
+                                'format': row.get('data_format', ''),
+                                'value_description': row.get('value_description', '')
+                            }
+                content_loaded = True
+                break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+
+        if not content_loaded:
+            print(f"Warning: Could not load {csv_file} with any supported encoding")
 
     return COLUMN_DESCRIPTIONS

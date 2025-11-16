@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -22,22 +23,6 @@ from backend.agents import SQLAgent, SQLAgentWorkflow
 from backend.config import HOST, PORT
 
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Interactive Text-to-SQL",
-    description="Multi-turn text-to-SQL system with LangChain and text-embedding-3-large",
-    version="1.0.0"
-)
-
-# Enable CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Global variables for database and agent
 db = None
 agent = None
@@ -46,31 +31,12 @@ embedding_manager = None
 USE_LANGGRAPH = os.getenv("USE_LANGGRAPH", "true").lower() == "true"
 
 
-# Request/Response models
-class QueryRequest(BaseModel):
-    question: str
-    session_id: Optional[str] = None
-
-
-class QueryResponse(BaseModel):
-    question: str
-    answer: str
-    final_sql: Optional[str]
-    sql_queries: List[str]
-    intermediate_steps: List[Dict]
-
-
-class SchemaResponse(BaseModel):
-    tables: List[str]
-    foreign_keys: List[Dict]
-    column_count: Dict[str, int]
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database and agent on startup"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events"""
     global db, agent, agent_workflow, embedding_manager
 
+    # Startup
     print("🚀 Starting Interactive Text-to-SQL backend...")
 
     # Initialize database
@@ -102,6 +68,49 @@ async def startup_event():
     print(f"\n🎉 Server ready at http://{HOST}:{PORT}")
     print(f"📊 Database schema: {len(db.get_tables())} tables")
     print(f"🔧 Using: {'LangGraph Workflow' if USE_LANGGRAPH else 'ReAct Agent'}")
+
+    yield
+
+    # Shutdown
+    print("👋 Shutting down Interactive Text-to-SQL backend...")
+
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(
+    title="Interactive Text-to-SQL",
+    description="Multi-turn text-to-SQL system with LangChain and text-embedding-3-large",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Request/Response models
+class QueryRequest(BaseModel):
+    question: str
+    session_id: Optional[str] = None
+
+
+class QueryResponse(BaseModel):
+    question: str
+    answer: str
+    final_sql: Optional[str]
+    sql_queries: List[str]
+    intermediate_steps: List[Dict]
+
+
+class SchemaResponse(BaseModel):
+    tables: List[str]
+    foreign_keys: List[Dict]
+    column_count: Dict[str, int]
 
 
 @app.get("/", response_class=HTMLResponse)
