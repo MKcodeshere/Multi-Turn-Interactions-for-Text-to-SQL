@@ -111,7 +111,11 @@ class SQLAgentWorkflow:
 Available actions:
 - SearchColumn: Find relevant columns by semantic meaning (use for wide tables or when column names are unclear)
 - SearchValue: Find specific values in the database (use when looking for specific entities)
-- FindShortestPath: Find join paths between tables (use when joining 2+ tables)
+- FindShortestPath: Find join paths between tables. ALWAYS use when:
+  * The question involves entities from different tables (e.g., players AND teams, matches AND players)
+  * You need to lookup IDs from names (e.g., finding team_id for "Barcelona")
+  * You need to display related information (e.g., showing team names in match results)
+  * Any query that requires joining 2+ tables
 - GenerateSQL: Generate the SQL query
 - ExecuteSQL: Execute the SQL and get results
 
@@ -119,6 +123,11 @@ Database Schema:
 {schema_summary}
 
 Question: {question}
+
+Examples:
+- "Show me all players" → ACTIONS: SearchColumn, GenerateSQL (single table)
+- "Find matches where Barcelona played" → ACTIONS: SearchValue, FindShortestPath, GenerateSQL (need to join Match with Team)
+- "Show player names with their team names" → ACTIONS: FindShortestPath, GenerateSQL (join Player with Team)
 
 Analyze the question and provide:
 1. A brief plan (2-3 sentences)
