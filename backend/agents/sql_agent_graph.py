@@ -57,6 +57,8 @@ class AgentState(TypedDict):
     needs_path_finding: bool
     needs_sql_generation: bool
     ready_to_execute: bool
+    path_finding_deferred: bool  # Path finding postponed to SQL generation
+    single_table_with_join_indicators: bool  # Single table but query suggests joins
 
     # Human interaction (multi-turn)
     needs_human_input: bool
@@ -317,9 +319,80 @@ Search values:"""),
             "messages": [AIMessage(content=f"Found {len(all_results)} relevant values")]
         }
 
+    def _is_join_related_error(self, error: str) -> bool:
+        """
+        Detect if an error is related to missing joins
+        """
+        error_lower = error.lower()
+        join_error_indicators = [
+            "no such column",
+            "ambiguous column",
+            "unknown column",
+            "table not found",
+            "cannot find table",
+            "cross join",
+            "cartesian product",
+            "missing join",
+            "foreign key"
+        ]
+        return any(indicator in error_lower for indicator in join_error_indicators)
+
+    def _perform_fallback_path_finding(self, state: AgentState) -> dict:
+        """
+        Perform path finding when it was skipped earlier but turns out to be needed
+        """
+        print(f"\n🔄 [FALLBACK PATH FINDING] Performing deferred path finding...")
+
+        # Extract tables from relevant columns
+        tables = set()
+        for col in state.get("relevant_columns", []):
+            if "table_name" in col:
+                tables.add(col["table_name"])
+
+        # Also try to extract tables from the SQL error if present
+        error = state.get("execution_error", "")
+        if error:
+            # Simple heuristic: look for table names in error messages
+            # This is database-specific, but works for many SQL databases
+            import re
+            table_pattern = r'\b([A-Z][a-zA-Z_]*)\b'  # Capitalized words (common table naming)
+            potential_tables = re.findall(table_pattern, error)
+            for table in potential_tables:
+                tables.add(table)
+
+        if len(tables) < 2:
+            print(f"   ⚠️  Still only {len(tables)} table(s) found, cannot perform path finding")
+            return {}
+
+        # Find paths between tables
+        path_tool = self.tools.get("FindShortestPath")
+        paths = []
+
+        if path_tool:
+            table_list = list(tables)
+            print(f"   🔗 Finding paths between {len(table_list)} tables: {table_list}")
+
+            for i in range(len(table_list) - 1):
+                try:
+                    path = path_tool._run(
+                        table_list[i],
+                        table_list[i + 1]
+                    )
+                    paths.append(path)
+                    print(f"      ✓ Fallback path {i+1}: {path}")
+                except Exception as e:
+                    print(f"      ✗ Fallback path error between {table_list[i]} and {table_list[i+1]}: {e}")
+
+        print(f"   ✅ Fallback path finding complete: found {len(paths)} paths")
+
+        return {
+            "join_paths": paths,
+            "path_finding_deferred": False
+        }
+
     def path_finding_node(self, state: AgentState) -> AgentState:
         """
-        Find join paths between tables
+        Find join paths between tables with intelligent detection
         """
         print(f"\n🗺️  [PATH FINDING] Finding join paths between tables...")
 
@@ -329,13 +402,57 @@ Search values:"""),
             if "table_name" in col:
                 tables.add(col["table_name"])
 
-        if len(tables) < 2:
-            # No join needed - single table query
-            print(f"   ⏭️  Skipping path finding (single table query)")
+        # Analyze if joins are actually needed
+        question = state.get("question", "").lower()
+        planning_requires_path = "FindShortestPath" in state.get("required_actions", [])
+
+        # Keywords that indicate cross-table relationships
+        join_keywords = [
+            "who played", "who scored", "which team", "players in",
+            "matches with", "teams that", "players who", "games where",
+            "between", "along with", "together with", "associated with",
+            "belonging to", "owned by", "managed by", "working on",
+            "during", "before", "after", "when", "where"
+        ]
+        has_join_keywords = any(keyword in question for keyword in join_keywords)
+
+        # Check if the question suggests relationships even with single table
+        # For example: "Show me players and their teams" might initially find only Player table
+        relationship_indicators = ["and their", "with their", "including their", "along with"]
+        suggests_relationships = any(indicator in question for indicator in relationship_indicators)
+
+        # Determine if we should skip path finding
+        should_skip = (
+            len(tables) < 2 and
+            not planning_requires_path and
+            not has_join_keywords and
+            not suggests_relationships
+        )
+
+        if should_skip:
+            # No join needed - genuinely single table query
+            print(f"   ⏭️  Skipping path finding (single table query, no join indicators)")
+            print(f"      Tables found: {tables}")
             return {
                 **state,
                 "needs_path_finding": False,
                 "current_step": "path_finding_skipped"
+            }
+
+        # If we have indicators but only one table, it might mean we need to look deeper
+        if len(tables) < 2:
+            print(f"   🔍 Only one table found, but join indicators present in question")
+            print(f"      Tables: {tables}, Planning requires path: {planning_requires_path}")
+            print(f"      Join keywords detected: {has_join_keywords}, Relationships suggested: {suggests_relationships}")
+
+            # Store this information for SQL generation to handle
+            return {
+                **state,
+                "needs_path_finding": False,
+                "path_finding_deferred": True,  # New flag for deferred path finding
+                "single_table_with_join_indicators": True,
+                "current_step": "path_finding_deferred",
+                "messages": [AIMessage(content="Path finding deferred - will analyze during SQL generation")]
             }
 
         # Find paths between tables
@@ -344,6 +461,8 @@ Search values:"""),
 
         if path_tool:
             table_list = list(tables)
+            print(f"   🔗 Finding paths between {len(table_list)} tables: {table_list}")
+
             for i in range(len(table_list) - 1):
                 try:
                     path = path_tool._run(
@@ -351,8 +470,9 @@ Search values:"""),
                         table_list[i + 1]
                     )
                     paths.append(path)
+                    print(f"      ✓ Path {i+1}: {path}")
                 except Exception as e:
-                    print(f"   ❌ Path finding error: {e}")
+                    print(f"      ✗ Path finding error between {table_list[i]} and {table_list[i+1]}: {e}")
 
         print(f"   ✅ Found {len(paths)} join paths")
 
@@ -366,15 +486,39 @@ Search values:"""),
 
     def sql_generation_node(self, state: AgentState) -> AgentState:
         """
-        Generate SQL query based on gathered information
+        Generate SQL query based on gathered information with fallback path finding
         """
         current_iteration = state.get("iteration", 0)
         print(f"\n💡 [SQL GENERATION] Generating SQL query... (Attempt {current_iteration + 1}/{state.get('max_iterations', 3)})")
 
+        # Check if we need fallback path finding
+        execution_error = state.get("execution_error", "")
+        path_finding_deferred = state.get("path_finding_deferred", False)
+        join_paths = state.get("join_paths", [])
+
+        # If this is a retry and we have a join-related error, try fallback path finding
+        if execution_error and self._is_join_related_error(execution_error) and not join_paths:
+            print(f"   🔍 Detected join-related error, attempting fallback path finding...")
+            fallback_result = self._perform_fallback_path_finding(state)
+            if fallback_result.get("join_paths"):
+                # Update state with the new paths
+                state = {**state, **fallback_result}
+                join_paths = fallback_result.get("join_paths", [])
+                print(f"   ✅ Fallback path finding successful, retrying SQL generation with {len(join_paths)} paths")
+
+        # If path finding was deferred and we still don't have paths, try to get them now
+        elif path_finding_deferred and not join_paths:
+            print(f"   🔍 Path finding was deferred, attempting now before SQL generation...")
+            fallback_result = self._perform_fallback_path_finding(state)
+            if fallback_result.get("join_paths"):
+                state = {**state, **fallback_result}
+                join_paths = fallback_result.get("join_paths", [])
+                print(f"   ✅ Deferred path finding successful, proceeding with {len(join_paths)} paths")
+
         # If this is a retry, include the previous error in the prompt
         error_context = ""
-        if state.get("execution_error"):
-            error_context = f"\nPrevious Error: {state.get('execution_error')}\nPlease fix the error in your SQL query."
+        if execution_error:
+            error_context = f"\nPrevious Error: {execution_error}\nPlease fix the error in your SQL query."
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an expert SQL query generator. Generate a SQL query to answer the question.
@@ -407,7 +551,7 @@ SQL Query:"""),
                 schema_summary=state["schema_summary"],
                 columns=str(state.get("relevant_columns", []))[:1000],
                 values=str(state.get("relevant_values", []))[:500],
-                paths=str(state.get("join_paths", []))[:500],
+                paths=str(join_paths)[:500],
                 previous_sql="\n".join(state.get("sql_queries", [])),
                 error_context=error_context
             )
