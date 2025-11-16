@@ -1,7 +1,7 @@
 """
 ExecuteSQL Tool - Execute SQL queries on the database
 """
-from typing import List, Tuple
+from typing import List, Tuple, Any
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -26,7 +26,7 @@ class ExecuteSQLTool(BaseTool):
     Example: ExecuteSQL("SELECT name FROM Player LIMIT 5")
     """
     args_schema: type[BaseModel] = ExecuteSQLInput
-    database: any = Field(default=None, exclude=True)
+    database: Any = Field(default=None, exclude=True)
 
     def __init__(self, database, **kwargs):
         super().__init__(**kwargs)

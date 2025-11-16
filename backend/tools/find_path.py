@@ -1,7 +1,7 @@
 """
 FindShortestPath Tool - Find join paths between columns
 """
-from typing import List, Union
+from typing import List, Union, Any
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -32,7 +32,7 @@ class FindShortestPathTool(BaseTool):
     Example: FindShortestPath(start=["Player.player_name", "Team.team_name"], end="Match.date")
     """
     args_schema: type[BaseModel] = FindShortestPathInput
-    database: any = Field(default=None, exclude=True)
+    database: Any = Field(default=None, exclude=True)
 
     def __init__(self, database, **kwargs):
         super().__init__(**kwargs)

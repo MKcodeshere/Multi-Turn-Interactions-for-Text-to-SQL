@@ -1,7 +1,7 @@
 """
 SearchValue Tool - Search for cell values in the database
 """
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Dict, Union, Any
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -38,7 +38,7 @@ class SearchValueTool(BaseTool):
     Example: SearchValue("Messi", table="Player") searches only in Player table.
     """
     args_schema: type[BaseModel] = SearchValueInput
-    database: any = Field(default=None, exclude=True)
+    database: Any = Field(default=None, exclude=True)
 
     def __init__(self, database, **kwargs):
         super().__init__(**kwargs)
