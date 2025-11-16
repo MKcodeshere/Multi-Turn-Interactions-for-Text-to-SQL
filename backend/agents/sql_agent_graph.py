@@ -177,7 +177,16 @@ ACTIONS: <action1>, <action2>, <action3>"""),
         # Include error context if this is a retry
         error_hint = ""
         if is_retry:
-            error_hint = f"\n\nPrevious error: {state.get('execution_error', '')}\nPlease search for columns that might resolve this error."
+            error_msg = state.get('execution_error', '')
+            # Extract the invalid column name from the error if possible
+            # Error format: "no such column: table.column" or "no such column: column"
+            import re
+            match = re.search(r'no such column:\s*(?:\w+\.)?(\w+)', error_msg.lower())
+            if match:
+                bad_column = match.group(1)
+                error_hint = f"\n\nPrevious error: {error_msg}\nThe column '{bad_column}' does not exist. Please search for alternative columns that might contain the data we're looking for."
+            else:
+                error_hint = f"\n\nPrevious error: {error_msg}\nPlease search for columns that might resolve this error."
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", """Based on the question and plan, identify what columns you need to search for.
@@ -630,6 +639,8 @@ Provide a clear, concise answer:"""),
         current_iteration = state.get("iteration", 0)
         max_iterations = state.get("max_iterations", 3)
 
+        print(f"\n🔍 [RETRY CHECK] Iteration: {current_iteration}/{max_iterations}, Error: {bool(execution_error)}")
+
         # If execution failed and we haven't exceeded max iterations
         if execution_error and current_iteration < max_iterations:
             # If we're on the last iteration before max, request human help if enabled
@@ -642,7 +653,7 @@ Provide a clear, concise answer:"""),
 
             # If it's a "no such column" error, re-search columns
             if "no such column" in execution_error.lower():
-                print(f"   🔄 Retrying with column re-search due to column error")
+                print(f"   🔄 Retrying with column re-search (Retry {current_iteration}/{max_iterations - 1})")
                 return "search_columns"
             else:
                 # For other errors, just regenerate SQL
@@ -651,14 +662,16 @@ Provide a clear, concise answer:"""),
 
         # If we have a result, generate answer
         if state.get("execution_result"):
+            print(f"   ✅ Execution successful, generating answer")
             return "answer"
 
         # If we've exceeded max iterations, still generate an answer explaining the failure
         if execution_error:
-            print(f"   ⚠️  Max iterations reached. Generating error response.")
+            print(f"   ⚠️  Max iterations ({max_iterations}) reached. Generating error response.")
             return "answer"
 
         # Otherwise end
+        print(f"   ℹ️  No error and no result, ending workflow")
         return END
 
     # ========================================================================
@@ -804,8 +817,12 @@ Provide a clear, concise answer:"""),
             "messages": []
         }
 
-        # Run the workflow
-        final_state = self.app.invoke(initial_state)
+        # Run the workflow with increased recursion limit
+        # Each retry cycle goes through 4-5 nodes, so we need more than the default 25
+        final_state = self.app.invoke(
+            initial_state,
+            config={"recursion_limit": 50}
+        )
 
         print(f"{'='*80}")
         print(f"✅ WORKFLOW COMPLETED")
