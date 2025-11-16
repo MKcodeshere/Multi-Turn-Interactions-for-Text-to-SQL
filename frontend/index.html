@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Text-to-SQL | CIKM 2025</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🔮 Interactive Text-to-SQL</h1>
+            <p class="subtitle">Multi-turn interactions with wide tables and complex joins</p>
+            <div class="paper-ref">
+                <span>📄 Based on: <em>Multi-Turn Interactions for Text-to-SQL with Large Language Models</em> (CIKM 2025)</span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Sidebar with Schema Info -->
+            <aside class="sidebar">
+                <div class="schema-info">
+                    <h3>📊 Database Schema</h3>
+                    <div id="schema-loading">Loading schema...</div>
+                    <div id="schema-content" class="hidden">
+                        <div class="schema-stats">
+                            <div class="stat">
+                                <span class="stat-label">Tables:</span>
+                                <span class="stat-value" id="table-count">-</span>
+                            </div>
+                            <div class="stat">
+                                <span class="stat-label">Foreign Keys:</span>
+                                <span class="stat-value" id="fk-count">-</span>
+                            </div>
+                        </div>
+                        <div class="table-list" id="table-list"></div>
+                    </div>
+                </div>
+
+                <div class="example-queries">
+                    <h3>💡 Example Queries</h3>
+                    <div class="example" onclick="useExample('Which countries have soccer leagues?')">
+                        <strong>Simple Query:</strong>
+                        <p>Which countries have soccer leagues?</p>
+                    </div>
+                    <div class="example" onclick="useExample('Find players with overall rating above 85 and high sprint speed')">
+                        <strong>Wide Table (60+ columns):</strong>
+                        <p>Find players with overall rating above 85 and high sprint speed</p>
+                    </div>
+                    <div class="example" onclick="useExample('Show matches where Barcelona played against Real Madrid with goals scored')">
+                        <strong>Complex Join (4+ tables):</strong>
+                        <p>Show matches where Barcelona played against Real Madrid</p>
+                    </div>
+                    <div class="example" onclick="useExample('Who is the player with the highest dribbling skill?')">
+                        <strong>Multi-turn Interaction:</strong>
+                        <p>Who is the player with the highest dribbling skill?</p>
+                    </div>
+                </div>
+
+                <div class="features">
+                    <h3>⚡ Features</h3>
+                    <ul>
+                        <li><strong>text-embedding-3-large</strong>: Semantic column matching</li>
+                        <li><strong>Wide tables</strong>: Handles 50+ columns efficiently</li>
+                        <li><strong>Complex joins</strong>: Automatic path finding</li>
+                        <li><strong>Multi-turn</strong>: Conversational interactions</li>
+                    </ul>
+                </div>
+            </aside>
+
+            <!-- Chat Interface -->
+            <main class="chat-container">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="system-message">
+                        <p>👋 Welcome! Ask me questions about the soccer database.</p>
+                        <p>I can handle complex queries with wide tables and multi-table joins using the Interactive-T2S framework.</p>
+                    </div>
+                </div>
+
+                <div class="chat-input-container">
+                    <textarea
+                        id="user-input"
+                        placeholder="Ask a question... (e.g., 'Which player has the best finishing skill?')"
+                        rows="2"
+                    ></textarea>
+                    <button id="send-button" onclick="sendQuery()">
+                        <span id="send-text">Send</span>
+                        <span id="send-loading" class="hidden">⏳</span>
+                    </button>
+                </div>
+            </main>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            <p>Built with LangChain, FastAPI, and OpenAI |
+               <a href="https://arxiv.org/abs/2408.11062v2" target="_blank">Read the Paper</a> |
+               <a href="/docs" target="_blank">API Docs</a>
+            </p>
+        </footer>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
