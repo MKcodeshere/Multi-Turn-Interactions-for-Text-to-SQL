@@ -97,6 +97,47 @@ class SQLAgentWorkflow:
         self.app = self.graph.compile()
 
     # ========================================================================
+    # HELPER METHODS
+    # ========================================================================
+
+    def _normalize_path(self, path_result) -> dict:
+        """
+        Normalize path data to consistent dictionary format for frontend
+
+        Args:
+            path_result: Can be a string (formatted path) or tuple (start, end, path)
+
+        Returns:
+            Dictionary with 'path' key containing list of table names
+        """
+        if isinstance(path_result, tuple):
+            # Format: (start_col, end_col, formatted_path_string)
+            path_str = path_result[2] if len(path_result) > 2 else ""
+        elif isinstance(path_result, str):
+            path_str = path_result
+        else:
+            return {"path": []}
+
+        # Parse the path string to extract table names
+        # Path format: "Table1.col <-> Table2.col <-> Table3.col"
+        if "No path found" in path_str or not path_str:
+            return {"path": []}
+
+        # Extract table names from the path
+        parts = [p.strip() for p in path_str.split("<->")]
+        tables = []
+        seen = set()
+
+        for part in parts:
+            if "." in part:
+                table = part.split(".")[0]
+                if table not in seen:
+                    tables.append(table)
+                    seen.add(table)
+
+        return {"path": tables, "full_path": path_str}
+
+    # ========================================================================
     # NODE IMPLEMENTATIONS
     # ========================================================================
 
@@ -399,9 +440,10 @@ Search values:"""),
 
                 try:
                     path = path_tool._run(source_col, target_col)
-                    paths.append(path)
+                    normalized_path = self._normalize_path(path)
+                    paths.append(normalized_path)
                     print(f"      ✓ Fallback path {i+1}: {source_table} → {target_table}")
-                    print(f"        {path}")
+                    print(f"        {normalized_path.get('full_path', path)}")
                 except Exception as e:
                     print(f"      ✗ Fallback path error {source_table} → {target_table}: {e}")
 
@@ -502,9 +544,10 @@ Search values:"""),
 
                 try:
                     path = path_tool._run(source_col, target_col)
-                    paths.append(path)
+                    normalized_path = self._normalize_path(path)
+                    paths.append(normalized_path)
                     print(f"      ✓ Path {i+1}: {source_table} → {target_table}")
-                    print(f"        {path}")
+                    print(f"        {normalized_path.get('full_path', path)}")
                 except Exception as e:
                     error_msg = f"{source_table} → {target_table}: {str(e)}"
                     path_errors.append(error_msg)
