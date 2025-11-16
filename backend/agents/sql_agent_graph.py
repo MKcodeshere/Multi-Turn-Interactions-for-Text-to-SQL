@@ -58,6 +58,8 @@ class AgentState(TypedDict):
     needs_sql_generation: bool
     ready_to_execute: bool
     path_finding_deferred: bool  # Path finding postponed to SQL generation
+    path_finding_failed: bool  # Path finding was attempted but found no paths
+    path_finding_errors: List[str]  # Errors encountered during path finding
     single_table_with_join_indicators: bool  # Single table but query suggests joins
 
     # Human interaction (multi-turn)
@@ -352,11 +354,17 @@ Search values:"""),
         """
         print(f"\n🔄 [FALLBACK PATH FINDING] Performing deferred path finding...")
 
-        # Extract tables from relevant columns
+        # Extract tables and their columns from relevant columns
         tables = set()
+        table_columns = {}  # Map table -> list of columns
         for col in state.get("relevant_columns", []):
-            if "table_name" in col:
-                tables.add(col["table_name"])
+            if "table_name" in col and "column_name" in col:
+                table_name = col["table_name"]
+                column_name = col["column_name"]
+                tables.add(table_name)
+                if table_name not in table_columns:
+                    table_columns[table_name] = []
+                table_columns[table_name].append(column_name)
 
         # Also try to extract tables from the SQL error if present
         error = state.get("execution_error", "")
@@ -373,7 +381,7 @@ Search values:"""),
             print(f"   ⚠️  Still only {len(tables)} table(s) found, cannot perform path finding")
             return {}
 
-        # Find paths between tables
+        # Find paths between tables using proper table.column format
         path_tool = self.tools.get("FindShortestPath")
         paths = []
 
@@ -382,15 +390,20 @@ Search values:"""),
             print(f"   🔗 Finding paths between {len(table_list)} tables: {table_list}")
 
             for i in range(len(table_list) - 1):
+                source_table = table_list[i]
+                target_table = table_list[i + 1]
+
+                # Get representative columns for each table (use first column or primary key)
+                source_col = f"{source_table}.{table_columns.get(source_table, ['id'])[0]}"
+                target_col = f"{target_table}.{table_columns.get(target_table, ['id'])[0]}"
+
                 try:
-                    path = path_tool._run(
-                        table_list[i],
-                        table_list[i + 1]
-                    )
+                    path = path_tool._run(source_col, target_col)
                     paths.append(path)
-                    print(f"      ✓ Fallback path {i+1}: {path}")
+                    print(f"      ✓ Fallback path {i+1}: {source_table} → {target_table}")
+                    print(f"        {path}")
                 except Exception as e:
-                    print(f"      ✗ Fallback path error between {table_list[i]} and {table_list[i+1]}: {e}")
+                    print(f"      ✗ Fallback path error {source_table} → {target_table}: {e}")
 
         print(f"   ✅ Fallback path finding complete: found {len(paths)} paths")
 
@@ -405,11 +418,17 @@ Search values:"""),
         """
         print(f"\n🗺️  [PATH FINDING] Finding join paths between tables...")
 
-        # Extract unique tables from relevant columns
+        # Extract unique tables and their columns from relevant columns
         tables = set()
+        table_columns = {}  # Map table -> list of columns
         for col in state.get("relevant_columns", []):
-            if "table_name" in col:
-                tables.add(col["table_name"])
+            if "table_name" in col and "column_name" in col:
+                table_name = col["table_name"]
+                column_name = col["column_name"]
+                tables.add(table_name)
+                if table_name not in table_columns:
+                    table_columns[table_name] = []
+                table_columns[table_name].append(column_name)
 
         # Analyze if joins are actually needed
         question = state.get("question", "").lower()
@@ -464,30 +483,55 @@ Search values:"""),
                 "messages": [AIMessage(content="Path finding deferred - will analyze during SQL generation")]
             }
 
-        # Find paths between tables
+        # Find paths between tables using proper table.column format
         path_tool = self.tools.get("FindShortestPath")
         paths = []
+        path_errors = []
 
         if path_tool:
             table_list = list(tables)
             print(f"   🔗 Finding paths between {len(table_list)} tables: {table_list}")
 
             for i in range(len(table_list) - 1):
+                source_table = table_list[i]
+                target_table = table_list[i + 1]
+
+                # Get representative columns for each table (use first column or primary key)
+                source_col = f"{source_table}.{table_columns.get(source_table, ['id'])[0]}"
+                target_col = f"{target_table}.{table_columns.get(target_table, ['id'])[0]}"
+
                 try:
-                    path = path_tool._run(
-                        table_list[i],
-                        table_list[i + 1]
-                    )
+                    path = path_tool._run(source_col, target_col)
                     paths.append(path)
-                    print(f"      ✓ Path {i+1}: {path}")
+                    print(f"      ✓ Path {i+1}: {source_table} → {target_table}")
+                    print(f"        {path}")
                 except Exception as e:
-                    print(f"      ✗ Path finding error between {table_list[i]} and {table_list[i+1]}: {e}")
+                    error_msg = f"{source_table} → {target_table}: {str(e)}"
+                    path_errors.append(error_msg)
+                    print(f"      ✗ Path finding error: {error_msg}")
 
         print(f"   ✅ Found {len(paths)} join paths")
+
+        # Validate: If path finding was required by planner but we found no paths, flag it
+        if planning_requires_path and len(paths) == 0:
+            print(f"   ⚠️  WARNING: Planner required path finding but no paths were found!")
+            print(f"      Errors: {path_errors}")
+            print(f"      Will attempt SQL generation without explicit paths (fallback)")
+            # Set flag to indicate path finding was attempted but failed
+            return {
+                **state,
+                "join_paths": [],
+                "path_finding_failed": True,
+                "path_finding_errors": path_errors,
+                "needs_path_finding": False,
+                "current_step": "path_finding_failed",
+                "messages": [AIMessage(content=f"Path finding failed: {'; '.join(path_errors[:3])}")]
+            }
 
         return {
             **state,
             "join_paths": paths,
+            "path_finding_failed": False,
             "needs_path_finding": False,
             "current_step": "path_finding_complete",
             "messages": [AIMessage(content=f"Found {len(paths)} join paths")]
@@ -523,6 +567,14 @@ Search values:"""),
                 state = {**state, **fallback_result}
                 join_paths = fallback_result.get("join_paths", [])
                 print(f"   ✅ Deferred path finding successful, proceeding with {len(join_paths)} paths")
+
+        # If path finding failed, add warning to error context
+        path_finding_failed = state.get("path_finding_failed", False)
+        if path_finding_failed and not join_paths:
+            path_errors = state.get("path_finding_errors", [])
+            print(f"   ⚠️  WARNING: Path finding failed but proceeding with SQL generation")
+            print(f"      Errors: {path_errors[:2]}")
+            print(f"      Relying on LLM's schema knowledge to generate joins")
 
         # If this is a retry, include the previous error in the prompt
         error_context = ""
@@ -962,6 +1014,10 @@ Provide a clear, concise answer:"""),
             "needs_path_finding": False,
             "needs_sql_generation": False,
             "ready_to_execute": False,
+            "path_finding_deferred": False,
+            "path_finding_failed": False,
+            "path_finding_errors": [],
+            "single_table_with_join_indicators": False,
             "needs_human_input": False,
             "human_feedback": "",
             "awaiting_confirmation": False,
