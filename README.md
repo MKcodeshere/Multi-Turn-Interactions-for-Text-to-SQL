@@ -1,22 +1,41 @@
-# Multi-Turn Text-to-SQL with LangChain
+# Multi-Turn Text-to-SQL with LangChain & LangGraph
 
 An interactive text-to-SQL system implementing the Interactive-T2S framework from the paper "Multi-Turn Interactions for Text-to-SQL with Large Language Models" (CIKM 2025).
 
 ## Features
 
 - **Multi-turn Interactions**: Step-by-step SQL generation through conversational interactions
+- **LangGraph Workflow**: Explicit nodes and edges for transparent, controllable agent behavior
 - **Wide Table Support**: Efficient handling of tables with 50+ columns using embeddings
 - **Complex Joins**: Automatic shortest path finding for multi-table queries
-- **LangChain Integration**: Built with LangChain for robust workflow management
+- **Dual Agent Modes**: Choose between LangGraph (structured workflow) or ReAct (flexible reasoning)
 - **Text-Embedding-3-Large**: OpenAI's latest embedding model for semantic column matching
 - **Interactive UI**: Web-based chat interface for natural language queries
 
 ## Architecture
 
-### Backend (FastAPI + LangChain)
-- Four general-purpose tools: SearchColumn, SearchValue, FindShortestPath, ExecuteSQL
-- Agent-based architecture with thought-action-observation loop
-- Embedding-based schema linking for efficient column discovery
+### Backend (FastAPI + LangChain + LangGraph)
+- **Two Agent Modes**:
+  - **LangGraph Workflow** (default): Explicit nodes and conditional edges for transparent control flow
+  - **ReAct Agent**: Traditional thought-action-observation loop with flexible reasoning
+- **Four General-Purpose Tools**: SearchColumn, SearchValue, FindShortestPath, ExecuteSQL
+- **Embedding-based Schema Linking**: Efficient column discovery for wide tables
+
+### LangGraph Workflow
+The LangGraph implementation provides a structured, controllable workflow with explicit nodes and edges:
+
+**Nodes**:
+1. **Planning**: Analyzes question and creates execution plan
+2. **Search Columns**: Semantic search for relevant columns
+3. **Search Values**: Find specific entities in the database
+4. **Find Paths**: Discover join paths between tables
+5. **Generate SQL**: Create query from gathered context
+6. **Execute SQL**: Run query and capture results
+7. **Answer**: Format natural language response
+
+**Conditional Edges**: Dynamic routing based on question complexity (skip unnecessary steps)
+
+See [LANGGRAPH_WORKFLOW.md](./LANGGRAPH_WORKFLOW.md) for detailed documentation.
 
 ### Frontend (HTML + JavaScript)
 - Real-time chat interface
@@ -42,6 +61,10 @@ pip install -r requirements.txt
 ```bash
 cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
+
+# Optional: Choose agent mode (default: LangGraph)
+export USE_LANGGRAPH=true   # Use LangGraph workflow (recommended)
+# export USE_LANGGRAPH=false  # Use ReAct agent
 ```
 
 4. Initialize the database:
@@ -57,6 +80,23 @@ python backend/main.py
 6. Open the frontend in your browser:
 ```
 http://localhost:8000
+```
+
+## Running Examples
+
+### Using the Example Script
+
+Run the LangGraph workflow directly without the web interface:
+
+```bash
+# Run demo queries
+python examples/langgraph_example.py
+
+# Visualize the workflow graph
+python examples/langgraph_example.py --visualize
+
+# Run a custom query
+python examples/langgraph_example.py --query "Which player scored the most goals?"
 ```
 
 ## Example Queries
@@ -83,30 +123,35 @@ http://localhost:8000
 ```
 .
 ├── backend/
-│   ├── main.py              # FastAPI application
-│   ├── config.py            # Configuration management
-│   ├── database.py          # Database connection
-│   ├── tools/               # LangChain tools
+│   ├── main.py                    # FastAPI application
+│   ├── config.py                  # Configuration management
+│   ├── database.py                # Database connection
+│   ├── tools/                     # LangChain tools
 │   │   ├── search_column.py
 │   │   ├── search_value.py
 │   │   ├── find_path.py
 │   │   └── execute_sql.py
-│   ├── agents/              # LangChain agent
-│   │   └── sql_agent.py
-│   └── embeddings/          # Embedding management
+│   ├── agents/                    # Agent implementations
+│   │   ├── sql_agent.py           # ReAct agent (traditional)
+│   │   └── sql_agent_graph.py     # LangGraph workflow (new!)
+│   └── embeddings/                # Embedding management
 │       └── column_embeddings.py
 ├── frontend/
-│   ├── index.html           # Main UI
+│   ├── index.html                 # Main UI
 │   ├── static/
 │   │   ├── css/
 │   │   │   └── style.css
 │   │   └── js/
 │   │       └── app.js
+├── examples/
+│   └── langgraph_example.py       # LangGraph usage examples
 ├── data/
-│   └── soccer.db            # SQLite database
-├── database_description/    # Schema metadata
-└── scripts/
-    └── init_database.py     # Database initialization
+│   └── soccer.db                  # SQLite database
+├── database_description/          # Schema metadata
+├── scripts/
+│   └── init_database.py           # Database initialization
+├── LANGGRAPH_WORKFLOW.md          # LangGraph documentation
+└── README.md
 ```
 
 ## Implementation Details

@@ -7,6 +7,7 @@ python-multipart==0.0.6
 langchain==0.1.6
 langchain-openai==0.0.5
 langchain-community==0.0.19
+langgraph==0.0.20
 
 # Database
 sqlalchemy==2.0.25

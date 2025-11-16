@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from backend.database import Database
 from backend.embeddings import ColumnEmbeddingManager
 from backend.tools import SearchColumnTool, SearchValueTool, FindShortestPathTool, ExecuteSQLTool
-from backend.agents import SQLAgent
+from backend.agents import SQLAgent, SQLAgentWorkflow
 from backend.config import HOST, PORT
 
 
@@ -41,7 +41,9 @@ app.add_middleware(
 # Global variables for database and agent
 db = None
 agent = None
+agent_workflow = None  # LangGraph workflow
 embedding_manager = None
+USE_LANGGRAPH = os.getenv("USE_LANGGRAPH", "true").lower() == "true"
 
 
 # Request/Response models
@@ -67,7 +69,7 @@ class SchemaResponse(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """Initialize database and agent on startup"""
-    global db, agent, embedding_manager
+    global db, agent, agent_workflow, embedding_manager
 
     print("🚀 Starting Interactive Text-to-SQL backend...")
 
@@ -89,12 +91,17 @@ async def startup_event():
         ExecuteSQLTool(database=db)
     ]
 
-    # Initialize agent
-    agent = SQLAgent(tools=tools, database=db)
-    print("✓ SQL Agent initialized")
+    # Initialize agent (choose between LangGraph and ReAct)
+    if USE_LANGGRAPH:
+        agent_workflow = SQLAgentWorkflow(tools=tools, database=db)
+        print("✓ LangGraph SQL Workflow initialized")
+    else:
+        agent = SQLAgent(tools=tools, database=db)
+        print("✓ ReAct SQL Agent initialized")
 
     print(f"\n🎉 Server ready at http://{HOST}:{PORT}")
     print(f"📊 Database schema: {len(db.get_tables())} tables")
+    print(f"🔧 Using: {'LangGraph Workflow' if USE_LANGGRAPH else 'ReAct Agent'}")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -147,22 +154,32 @@ async def process_query(request: QueryRequest):
     - Uses FindShortestPath for complex joins
     - Uses ExecuteSQL for query execution
     """
-    if agent is None:
+    if USE_LANGGRAPH and agent_workflow is None:
+        raise HTTPException(status_code=500, detail="Agent workflow not initialized")
+    elif not USE_LANGGRAPH and agent is None:
         raise HTTPException(status_code=500, detail="Agent not initialized")
 
     try:
-        # Process query using the agent
-        result = agent.query(request.question)
+        # Process query using the appropriate agent
+        if USE_LANGGRAPH:
+            result = agent_workflow.query(request.question)
 
-        # Format intermediate steps for response
-        formatted_steps = []
-        for step in result.get('intermediate_steps', []):
-            action, observation = step
-            formatted_steps.append({
-                "tool": action.tool if hasattr(action, 'tool') else "unknown",
-                "input": action.tool_input if hasattr(action, 'tool_input') else {},
-                "output": str(observation)[:500]  # Limit output length
-            })
+            # Format intermediate steps from LangGraph
+            formatted_steps = result.get('intermediate_steps', [])
+
+        else:
+            # Use ReAct agent
+            result = agent.query(request.question)
+
+            # Format intermediate steps for ReAct agent
+            formatted_steps = []
+            for step in result.get('intermediate_steps', []):
+                action, observation = step
+                formatted_steps.append({
+                    "tool": action.tool if hasattr(action, 'tool') else "unknown",
+                    "input": action.tool_input if hasattr(action, 'tool_input') else {},
+                    "output": str(observation)[:500]  # Limit output length
+                })
 
         return QueryResponse(
             question=result['question'],
@@ -179,11 +196,18 @@ async def process_query(request: QueryRequest):
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
+    agent_status = "not initialized"
+    if USE_LANGGRAPH:
+        agent_status = "initialized (LangGraph)" if agent_workflow else "not initialized"
+    else:
+        agent_status = "initialized (ReAct)" if agent else "not initialized"
+
     return {
         "status": "healthy",
         "database": "connected" if db else "not connected",
-        "agent": "initialized" if agent else "not initialized",
-        "embeddings": "ready" if embedding_manager else "not ready"
+        "agent": agent_status,
+        "embeddings": "ready" if embedding_manager else "not ready",
+        "mode": "LangGraph" if USE_LANGGRAPH else "ReAct"
     }
 
 
