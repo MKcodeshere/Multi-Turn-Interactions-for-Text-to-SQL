@@ -97,6 +97,14 @@ async function sendQuery() {
 
         const data = await response.json();
 
+        // Debug: Log the response data to check if path selection data is present
+        console.log('📊 Response Data:', {
+            has_paths: !!data.join_paths,
+            num_paths: data.join_paths?.length || 0,
+            selected_indices: data.selected_path_indices,
+            reasoning: data.path_selection_reasoning
+        });
+
         // Add assistant response
         addAssistantMessage(data);
 
