@@ -86,23 +86,24 @@ class ColumnEmbeddingManager:
             k: Number of results to return
 
         Returns:
-            List of column information dictionaries
+            List of column information dictionaries with similarity scores
         """
         if not self.vector_store:
             self.build_embeddings()
 
-        # Perform similarity search
-        results = self.vector_store.similarity_search(semantic_query, k=k)
+        # Perform similarity search with scores
+        results = self.vector_store.similarity_search_with_score(semantic_query, k=k)
 
         # Format results
         formatted_results = []
-        for doc in results:
+        for doc, score in results:
             formatted_results.append({
                 'column_name': doc.metadata['column'],
                 'table_name': doc.metadata['table'],
                 'data_type': doc.metadata['type'],
                 'description': doc.metadata['description'],
-                'statistics': doc.metadata['statistics']
+                'statistics': doc.metadata['statistics'],
+                'similarity': float(1.0 / (1.0 + score))  # Convert distance to similarity (0-1 range)
             })
 
         return formatted_results
