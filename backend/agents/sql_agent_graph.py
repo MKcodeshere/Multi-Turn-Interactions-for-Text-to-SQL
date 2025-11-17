@@ -46,6 +46,8 @@ class AgentState(TypedDict):
     # SQL generation
     sql_query: str
     sql_queries: Annotated[List[str], operator.add]  # Accumulate all SQL attempts
+    selected_path_indices: List[int]  # Indices of join paths selected by LLM
+    path_selection_reasoning: str  # LLM's explanation for path selection
 
     # Execution results
     execution_result: Any
@@ -624,6 +626,16 @@ Search values:"""),
         if execution_error:
             error_context = f"\nPrevious Error: {execution_error}\nPlease fix the error in your SQL query."
 
+        # Format paths with indices for LLM to reference
+        paths_formatted = ""
+        if join_paths:
+            for idx, path in enumerate(join_paths):
+                path_display = ' → '.join(path.get('path', [])) if path.get('path') else 'N/A'
+                full_path = path.get('full_path', '')
+                paths_formatted += f"\n[Path {idx}]: {path_display}\n  Details: {full_path}\n"
+        else:
+            paths_formatted = "No join paths found. Use your knowledge of the schema to construct appropriate joins."
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an expert SQL query generator. Generate a SQL query to answer the question.
 
@@ -638,15 +650,26 @@ Relevant Columns:
 Relevant Values:
 {values}
 
-Join Paths:
+Join Paths Available:
 {paths}
 
 Previous SQL attempts and errors:
 {previous_sql}
 {error_context}
 
-Generate a valid SQL query. Output ONLY the SQL query, no explanations.
-SQL Query:"""),
+IMPORTANT: Respond with a JSON object in this exact format:
+{{
+  "selected_paths": [0, 1],  // Array of path indices you're using (empty array if no paths needed)
+  "reasoning": "Brief explanation of why you chose these paths",
+  "sql": "SELECT ... your SQL query here ..."
+}}
+
+Make sure to:
+1. Include the path indices (e.g., [0], [1, 2], or []) you're actually using for joins
+2. Provide brief reasoning for your path selection
+3. Generate valid SQL that uses those paths
+
+JSON Response:"""),
         ])
 
         response = self.llm.invoke(
@@ -655,33 +678,69 @@ SQL Query:"""),
                 schema_summary=state["schema_summary"],
                 columns=str(state.get("relevant_columns", []))[:1000],
                 values=str(state.get("relevant_values", []))[:500],
-                paths=str(join_paths)[:500],
+                paths=paths_formatted,
                 previous_sql="\n".join(state.get("sql_queries", [])),
                 error_context=error_context
             )
         )
 
-        sql_query = response.content.strip()
+        response_text = response.content.strip()
 
-        # Clean up SQL (remove markdown code blocks if present)
-        if sql_query.startswith("```sql"):
-            sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
-        elif sql_query.startswith("```"):
-            sql_query = sql_query.replace("```", "").strip()
+        # Parse JSON response
+        import json
+        import re
 
-        print(f"   ✅ Generated SQL: {sql_query[:100]}{'...' if len(sql_query) > 100 else ''}")
+        selected_paths = []
+        reasoning = ""
+        sql_query = ""
+
+        try:
+            # Try to extract JSON from response (handle markdown code blocks)
+            json_text = response_text
+            if "```json" in json_text:
+                json_text = re.search(r'```json\s*(\{.*?\})\s*```', json_text, re.DOTALL)
+                json_text = json_text.group(1) if json_text else response_text
+            elif "```" in json_text:
+                json_text = re.search(r'```\s*(\{.*?\})\s*```', json_text, re.DOTALL)
+                json_text = json_text.group(1) if json_text else response_text
+
+            # Remove any trailing commas before closing braces (common JSON error)
+            json_text = re.sub(r',(\s*[}\]])', r'\1', json_text)
+
+            parsed = json.loads(json_text)
+            selected_paths = parsed.get("selected_paths", [])
+            reasoning = parsed.get("reasoning", "No reasoning provided")
+            sql_query = parsed.get("sql", "")
+
+            print(f"   📊 Path Selection: {selected_paths}")
+            print(f"   💭 Reasoning: {reasoning}")
+            print(f"   ✅ Generated SQL: {sql_query[:100]}{'...' if len(sql_query) > 100 else ''}")
+
+        except (json.JSONDecodeError, AttributeError) as e:
+            print(f"   ⚠️  Failed to parse JSON response, falling back to plain text: {e}")
+            # Fallback: treat entire response as SQL
+            sql_query = response_text
+            # Clean up SQL (remove markdown code blocks if present)
+            if sql_query.startswith("```sql"):
+                sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
+            elif sql_query.startswith("```"):
+                sql_query = sql_query.replace("```", "").strip()
+            reasoning = "Failed to parse structured response"
+            print(f"   ✅ Generated SQL (fallback): {sql_query[:100]}{'...' if len(sql_query) > 100 else ''}")
 
         return {
             **state,
             "sql_query": sql_query,
             "sql_queries": [sql_query],
+            "selected_path_indices": selected_paths,
+            "path_selection_reasoning": reasoning,
             "needs_sql_generation": False,
             "ready_to_execute": False,  # Don't execute immediately
             "awaiting_confirmation": True,  # Wait for human confirmation
             "confirmation_type": "sql",
             "iteration": current_iteration + 1,  # Increment iteration counter
             "current_step": "sql_generated",
-            "messages": [AIMessage(content=f"Generated SQL (Attempt {current_iteration + 1}): {sql_query}")]
+            "messages": [AIMessage(content=f"Generated SQL (Attempt {current_iteration + 1}): {sql_query}\nPaths used: {selected_paths}\nReasoning: {reasoning}")]
         }
 
     def sql_execution_node(self, state: AgentState) -> AgentState:
@@ -1050,6 +1109,8 @@ Provide a clear, concise answer:"""),
             "join_paths": [],
             "sql_query": "",
             "sql_queries": [],
+            "selected_path_indices": [],
+            "path_selection_reasoning": "",
             "execution_result": None,
             "execution_error": "",
             "needs_column_search": False,
@@ -1091,6 +1152,8 @@ Provide a clear, concise answer:"""),
             "relevant_columns": final_state.get("relevant_columns", []),
             "relevant_values": final_state.get("relevant_values", []),
             "join_paths": final_state.get("join_paths", []),
+            "selected_path_indices": final_state.get("selected_path_indices", []),
+            "path_selection_reasoning": final_state.get("path_selection_reasoning", ""),
             "intermediate_steps": [
                 {
                     "step": msg.content,

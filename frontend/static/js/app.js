@@ -253,6 +253,7 @@ function buildInteractionSteps(data) {
     if (hasPaths) {
         const topPaths = data.join_paths.slice(0, 3);
         const hasMore = data.join_paths.length > 3;
+        const selectedIndices = data.selected_path_indices || [];
 
         html += `
             <div class="step">
@@ -264,24 +265,48 @@ function buildInteractionSteps(data) {
                 <table class="step-table">
                     <thead>
                         <tr>
+                            <th>Status</th>
                             <th>Path</th>
                             <th>Tables</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${topPaths.map(path => `
-                            <tr>
-                                <td>
-                                    <div class="step-path">
-                                        ${escapeHtml(path.path ? path.path.join(' → ') : 'N/A')}
-                                    </div>
-                                </td>
-                                <td>${path.path ? path.path.length : 0}</td>
-                            </tr>
-                        `).join('')}
+                        ${topPaths.map((path, idx) => {
+                            const isUsed = selectedIndices.includes(idx);
+                            const statusBadge = isUsed
+                                ? '<span style="color: #4caf50; font-weight: bold;">✅ USED</span>'
+                                : '<span style="color: var(--text-secondary);">○ Available</span>';
+                            const rowStyle = isUsed ? 'background: rgba(76, 175, 80, 0.1);' : '';
+
+                            return `
+                                <tr style="${rowStyle}">
+                                    <td style="text-align: center;">${statusBadge}</td>
+                                    <td>
+                                        <div class="step-path">
+                                            ${escapeHtml(path.path ? path.path.join(' → ') : 'N/A')}
+                                        </div>
+                                    </td>
+                                    <td>${path.path ? path.path.length : 0}</td>
+                                </tr>
+                            `;
+                        }).join('')}
                     </tbody>
                 </table>
                 ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 3 of ${data.join_paths.length} paths')">View All ${data.join_paths.length} Paths</button>` : ''}
+            </div>
+        `;
+    }
+
+    // Show path selection reasoning (if available)
+    if (data.path_selection_reasoning && data.path_selection_reasoning.trim()) {
+        html += `
+            <div class="step">
+                <span class="step-tool">💭 Path Selection Reasoning</span>
+                <div class="step-content">
+                    <div style="padding: 12px; background: var(--code-bg); border-radius: 4px; border-left: 3px solid var(--secondary-color);">
+                        ${escapeHtml(data.path_selection_reasoning)}
+                    </div>
+                </div>
             </div>
         `;
     }
