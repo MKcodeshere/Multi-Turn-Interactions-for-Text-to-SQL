@@ -171,11 +171,8 @@ function addAssistantMessage(data) {
 function buildInteractionSteps(data) {
     let html = '';
     const hasSteps = data.intermediate_steps && data.intermediate_steps.length > 0;
-    const hasColumns = data.relevant_columns && data.relevant_columns.length > 0;
-    const hasValues = data.relevant_values && data.relevant_values.length > 0;
-    const hasPaths = data.join_paths && data.join_paths.length > 0;
 
-    if (!hasSteps && !hasColumns && !hasValues && !hasPaths) {
+    if (!hasSteps) {
         return '';
     }
 
@@ -187,160 +184,203 @@ function buildInteractionSteps(data) {
             <div class="interaction-steps">
     `;
 
-    // Show relevant columns
-    if (hasColumns) {
-        const topColumns = data.relevant_columns.slice(0, 5);
-        const hasMore = data.relevant_columns.length > 5;
+    // Process each step and embed appropriate data
+    data.intermediate_steps.forEach((step, index) => {
+        const stepContent = String(step.step || step.output || '');
+        const stepNum = index + 1;
 
-        html += `
-            <div class="step">
-                <span class="step-tool">🎯 Relevant Columns Found</span>
-                <div class="step-content">
-                    <span class="step-badge">${data.relevant_columns.length} total columns</span>
-                    ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px;">(showing top 5)</span>` : ''}
-                </div>
-                <table class="step-table">
-                    <thead>
-                        <tr>
-                            <th>Table</th>
-                            <th>Column</th>
-                            <th>Similarity</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${topColumns.map(col => `
-                            <tr>
-                                <td>${escapeHtml(col.table_name || '')}</td>
-                                <td>${escapeHtml(col.column_name || '')}</td>
-                                <td>${(col.similarity || 0).toFixed(3)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-                ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 5 of ${data.relevant_columns.length} columns')">View All ${data.relevant_columns.length} Columns</button>` : ''}
-            </div>
-        `;
-    }
+        html += `<div class="step" style="margin: 15px 0; padding: 15px; background: var(--card-bg); border-radius: 8px; border-left: 4px solid var(--secondary-color);">`;
 
-    // Show relevant values
-    if (hasValues) {
-        const topValues = data.relevant_values.slice(0, 3);
-        const hasMore = data.relevant_values.length > 3;
-
-        html += `
-            <div class="step">
-                <span class="step-tool">🔎 Relevant Values Found</span>
-                <div class="step-content">
-                    <span class="step-badge">${data.relevant_values.length} total values</span>
-                    ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px;">(showing top 3)</span>` : ''}
-                </div>
-                <table class="step-table">
-                    <thead>
-                        <tr>
-                            <th>Table</th>
-                            <th>Column</th>
-                            <th>Value</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${topValues.map(val => `
-                            <tr>
-                                <td>${escapeHtml(val.table_name || '')}</td>
-                                <td>${escapeHtml(val.column_name || '')}</td>
-                                <td>${escapeHtml(String(val.value || ''))}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-                ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 3 of ${data.relevant_values.length} values')">View All ${data.relevant_values.length} Values</button>` : ''}
-            </div>
-        `;
-    }
-
-    // Show join paths
-    if (hasPaths) {
-        const topPaths = data.join_paths.slice(0, 3);
-        const hasMore = data.join_paths.length > 3;
-        const selectedIndices = data.selected_path_indices || [];
-
-        html += `
-            <div class="step">
-                <span class="step-tool">🔗 Join Paths Found</span>
-                <div class="step-content">
-                    <span class="step-badge">${data.join_paths.length} total paths</span>
-                    ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px;">(showing top 3)</span>` : ''}
-                </div>
-                <table class="step-table">
-                    <thead>
-                        <tr>
-                            <th>Status</th>
-                            <th>Path</th>
-                            <th>Tables</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${topPaths.map((path, idx) => {
-                            const isUsed = selectedIndices.includes(idx);
-                            const statusBadge = isUsed
-                                ? '<span style="color: #4caf50; font-weight: bold;">✅ USED</span>'
-                                : '<span style="color: var(--text-secondary);">○ Available</span>';
-                            const rowStyle = isUsed ? 'background: rgba(76, 175, 80, 0.1);' : '';
-
-                            return `
-                                <tr style="${rowStyle}">
-                                    <td style="text-align: center;">${statusBadge}</td>
-                                    <td>
-                                        <div class="step-path">
-                                            ${escapeHtml(path.path ? path.path.join(' → ') : 'N/A')}
-                                        </div>
-                                    </td>
-                                    <td>${path.path ? path.path.length : 0}</td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-                ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 3 of ${data.join_paths.length} paths')">View All ${data.join_paths.length} Paths</button>` : ''}
-            </div>
-        `;
-    }
-
-    // Show path selection reasoning (if available)
-    if (data.path_selection_reasoning && data.path_selection_reasoning.trim()) {
-        html += `
-            <div class="step">
-                <span class="step-tool">💭 Path Selection Reasoning</span>
-                <div class="step-content">
-                    <div style="padding: 12px; background: var(--code-bg); border-radius: 4px; border-left: 3px solid var(--secondary-color);">
-                        ${escapeHtml(data.path_selection_reasoning)}
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    // Show text-based intermediate steps
-    if (hasSteps) {
-        html += `
-            <div class="step">
-                <span class="step-tool">📝 Processing Steps</span>
-                <div class="step-content">
-        `;
-
-        data.intermediate_steps.forEach((step, index) => {
+        // Detect step type and render accordingly
+        if (stepContent.includes('Plan:') || stepContent.includes('Required actions:')) {
+            // Planning step
             html += `
-                <div style="margin: 8px 0; padding: 8px; background: var(--code-bg); border-radius: 4px;">
-                    <strong style="color: var(--secondary-color);">Step ${index + 1}:</strong>
-                    ${escapeHtml(String(step.step || step.output || ''))}
+                <div style="margin-bottom: 10px;">
+                    <strong style="color: var(--secondary-color); font-size: 1.05em;">📋 Step ${stepNum}: Planning</strong>
+                </div>
+                <div style="padding: 10px; background: var(--bg-primary); border-radius: 4px;">
+                    ${escapeHtml(stepContent)}
                 </div>
             `;
-        });
-
-        html += `
+        } else if (stepContent.includes('Found') && stepContent.includes('relevant columns')) {
+            // Column search step - embed column table
+            html += `
+                <div style="margin-bottom: 10px;">
+                    <strong style="color: var(--secondary-color); font-size: 1.05em;">🎯 Step ${stepNum}: Relevant Columns</strong>
                 </div>
-            </div>
-        `;
-    }
+            `;
+            if (data.relevant_columns && data.relevant_columns.length > 0) {
+                const topColumns = data.relevant_columns.slice(0, 5);
+                const hasMore = data.relevant_columns.length > 5;
+                html += `
+                    <div style="margin-bottom: 8px;">
+                        <span class="step-badge">${data.relevant_columns.length} columns found</span>
+                        ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px; font-size: 0.9em;">(showing top 5)</span>` : ''}
+                    </div>
+                    <table class="step-table">
+                        <thead>
+                            <tr>
+                                <th>Table</th>
+                                <th>Column</th>
+                                <th>Type</th>
+                                <th>Similarity</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${topColumns.map(col => `
+                                <tr>
+                                    <td>${escapeHtml(col.table_name || '')}</td>
+                                    <td><strong>${escapeHtml(col.column_name || '')}</strong></td>
+                                    <td style="font-size: 0.9em; color: var(--text-secondary);">${escapeHtml(col.data_type || '')}</td>
+                                    <td>${(col.similarity || 0).toFixed(3)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            }
+        } else if (stepContent.includes('Found') && stepContent.includes('relevant values')) {
+            // Value search step - embed value table
+            html += `
+                <div style="margin-bottom: 10px;">
+                    <strong style="color: var(--secondary-color); font-size: 1.05em;">🔎 Step ${stepNum}: Relevant Values</strong>
+                </div>
+            `;
+            if (data.relevant_values && data.relevant_values.length > 0) {
+                const topValues = data.relevant_values.slice(0, 3);
+                const hasMore = data.relevant_values.length > 3;
+                html += `
+                    <div style="margin-bottom: 8px;">
+                        <span class="step-badge">${data.relevant_values.length} values found</span>
+                        ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px; font-size: 0.9em;">(showing top 3)</span>` : ''}
+                    </div>
+                    <table class="step-table">
+                        <thead>
+                            <tr>
+                                <th>Table</th>
+                                <th>Column</th>
+                                <th>Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${topValues.map(val => `
+                                <tr>
+                                    <td>${escapeHtml(val.table_name || val.table || '')}</td>
+                                    <td><strong>${escapeHtml(val.column_name || val.column || '')}</strong></td>
+                                    <td style="background: var(--code-bg); padding: 4px 8px; border-radius: 3px;">${escapeHtml(String(val.value || val.contents || ''))}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            }
+        } else if (stepContent.includes('Found') && stepContent.includes('join paths')) {
+            // Path finding step - embed path table with full details
+            html += `
+                <div style="margin-bottom: 10px;">
+                    <strong style="color: var(--secondary-color); font-size: 1.05em;">🔗 Step ${stepNum}: Join Paths</strong>
+                </div>
+            `;
+            if (data.join_paths && data.join_paths.length > 0) {
+                const topPaths = data.join_paths.slice(0, 3);
+                const hasMore = data.join_paths.length > 3;
+                const selectedIndices = data.selected_path_indices || [];
+
+                html += `
+                    <div style="margin-bottom: 8px;">
+                        <span class="step-badge">${data.join_paths.length} paths found</span>
+                        ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px; font-size: 0.9em;">(showing top 3)</span>` : ''}
+                    </div>
+                `;
+
+                topPaths.forEach((path, idx) => {
+                    const isUsed = selectedIndices.includes(idx);
+                    const statusBadge = isUsed
+                        ? '<span style="color: #4caf50; font-weight: bold;">✅ USED</span>'
+                        : '<span style="color: var(--text-secondary);">○ Available</span>';
+                    const borderColor = isUsed ? '#4caf50' : 'var(--border-color)';
+                    const bgColor = isUsed ? 'rgba(76, 175, 80, 0.05)' : 'var(--code-bg)';
+
+                    html += `
+                        <div style="margin: 10px 0; padding: 12px; background: ${bgColor}; border-radius: 6px; border-left: 4px solid ${borderColor};">
+                            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                                ${statusBadge}
+                                <strong style="margin-left: 10px; color: var(--secondary-color);">Path ${idx}:</strong>
+                                <span style="margin-left: 10px; font-family: monospace; font-size: 0.95em;">${escapeHtml(path.path ? path.path.join(' → ') : 'N/A')}</span>
+                            </div>
+                            ${path.full_path ? `
+                                <div style="margin-top: 8px; padding: 8px; background: var(--bg-primary); border-radius: 4px; font-family: monospace; font-size: 0.85em; color: var(--text-secondary); line-height: 1.6;">
+                                    ${escapeHtml(path.full_path)}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+            }
+        } else if (stepContent.includes('Paths used:') || stepContent.includes('Reasoning:')) {
+            // SQL Generation step with path selection
+            html += `
+                <div style="margin-bottom: 10px;">
+                    <strong style="color: var(--secondary-color); font-size: 1.05em;">💡 Step ${stepNum}: SQL Generation</strong>
+                </div>
+            `;
+
+            // Extract SQL, paths used, and reasoning
+            const lines = stepContent.split('\n');
+            let sqlLine = '';
+            let pathsLine = '';
+            let reasoningLine = '';
+
+            lines.forEach(line => {
+                if (line.includes('Generated SQL') && line.includes(':')) {
+                    sqlLine = line.substring(line.indexOf(':') + 1).trim();
+                } else if (line.includes('Paths used:')) {
+                    pathsLine = line.substring(line.indexOf(':') + 1).trim();
+                } else if (line.includes('Reasoning:')) {
+                    reasoningLine = line.substring(line.indexOf(':') + 1).trim();
+                }
+            });
+
+            if (sqlLine) {
+                html += `
+                    <div style="margin: 8px 0; padding: 10px; background: var(--code-bg); border-radius: 4px;">
+                        <div style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 4px;">SQL Query:</div>
+                        <code style="color: var(--text-primary);">${escapeHtml(sqlLine)}</code>
+                    </div>
+                `;
+            }
+
+            if (pathsLine) {
+                html += `
+                    <div style="margin: 8px 0; padding: 10px; background: var(--bg-primary); border-radius: 4px;">
+                        <div style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 4px;">Paths Selected:</div>
+                        <div>${escapeHtml(pathsLine)}</div>
+                    </div>
+                `;
+            }
+
+            if (reasoningLine) {
+                html += `
+                    <div style="margin: 8px 0; padding: 10px; background: var(--bg-primary); border-radius: 4px; border-left: 3px solid var(--secondary-color);">
+                        <div style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 4px;">💭 Reasoning:</div>
+                        <div>${escapeHtml(reasoningLine)}</div>
+                    </div>
+                `;
+            }
+        } else {
+            // Generic step
+            html += `
+                <div style="margin-bottom: 10px;">
+                    <strong style="color: var(--secondary-color); font-size: 1.05em;">📝 Step ${stepNum}</strong>
+                </div>
+                <div style="padding: 10px; background: var(--bg-primary); border-radius: 4px;">
+                    ${escapeHtml(stepContent)}
+                </div>
+            `;
+        }
+
+        html += `</div>`;
+    });
 
     html += `
             </div>
