@@ -333,7 +333,12 @@ function buildInteractionSteps(data) {
 
             lines.forEach(line => {
                 if (line.includes('Generated SQL') && line.includes(':')) {
-                    sqlLine = line.substring(line.indexOf(':') + 1).trim();
+                    // Get everything after the colon, handling multi-line SQL
+                    const colonIndex = line.indexOf(':');
+                    sqlLine = line.substring(colonIndex + 1).trim();
+                } else if (sqlLine && !line.includes('Paths used:') && !line.includes('Reasoning:') && line.trim()) {
+                    // Continue SQL from previous line if we're still building it
+                    sqlLine += ' ' + line.trim();
                 } else if (line.includes('Paths used:')) {
                     pathsLine = line.substring(line.indexOf(':') + 1).trim();
                 } else if (line.includes('Reasoning:')) {
@@ -341,11 +346,16 @@ function buildInteractionSteps(data) {
                 }
             });
 
+            // If SQL is still incomplete, check if we have the full SQL in data.final_sql
+            if (sqlLine.length < 50 && data.final_sql) {
+                sqlLine = data.final_sql;
+            }
+
             if (sqlLine) {
                 html += `
-                    <div style="margin: 8px 0; padding: 10px; background: var(--code-bg); border-radius: 4px;">
-                        <div style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 4px;">SQL Query:</div>
-                        <code style="color: var(--text-primary);">${escapeHtml(sqlLine)}</code>
+                    <div style="margin: 8px 0; padding: 12px; background: var(--code-bg); border-radius: 4px; overflow-x: auto;">
+                        <div style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 6px;">SQL Query:</div>
+                        <pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word; font-family: monospace; font-size: 0.9em; line-height: 1.5;"><code style="color: var(--text-primary);">${escapeHtml(sqlLine)}</code></pre>
                     </div>
                 `;
             }
@@ -364,6 +374,91 @@ function buildInteractionSteps(data) {
                     <div style="margin: 8px 0; padding: 10px; background: var(--bg-primary); border-radius: 4px; border-left: 3px solid var(--secondary-color);">
                         <div style="font-size: 0.9em; color: var(--text-secondary); margin-bottom: 4px;">💭 Reasoning:</div>
                         <div>${escapeHtml(reasoningLine)}</div>
+                    </div>
+                `;
+            }
+        } else if (stepContent.includes('Query executed successfully')) {
+            // SQL Execution Results step - show as table
+            html += `
+                <div style="margin-bottom: 10px;">
+                    <strong style="color: var(--secondary-color); font-size: 1.05em;">✅ Step ${stepNum}: Query Executed</strong>
+                </div>
+            `;
+
+            if (data.execution_result) {
+                const results = data.execution_result;
+
+                // Check if results is an array
+                if (Array.isArray(results) && results.length > 0) {
+                    // Get column names from first row
+                    const firstRow = results[0];
+                    let columns = [];
+
+                    if (Array.isArray(firstRow)) {
+                        // If rows are arrays, use generic column names
+                        columns = firstRow.map((_, idx) => `Column ${idx + 1}`);
+                    } else if (typeof firstRow === 'object') {
+                        // If rows are objects, use keys as column names
+                        columns = Object.keys(firstRow);
+                    } else {
+                        // Single column result
+                        columns = ['Result'];
+                    }
+
+                    const rowsToShow = results.slice(0, 10);
+                    const hasMore = results.length > 10;
+
+                    html += `
+                        <div style="margin-bottom: 8px;">
+                            <span class="step-badge">${results.length} rows returned</span>
+                            ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px; font-size: 0.9em;">(showing first 10)</span>` : ''}
+                        </div>
+                        <div style="overflow-x: auto;">
+                            <table class="step-table">
+                                <thead>
+                                    <tr>
+                                        ${columns.map(col => `<th>${escapeHtml(String(col))}</th>`).join('')}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${rowsToShow.map(row => {
+                                        let cells = [];
+                                        if (Array.isArray(row)) {
+                                            cells = row;
+                                        } else if (typeof row === 'object') {
+                                            cells = columns.map(col => row[col]);
+                                        } else {
+                                            cells = [row];
+                                        }
+
+                                        return `
+                                            <tr>
+                                                ${cells.map(cell => `<td>${escapeHtml(String(cell ?? 'NULL'))}</td>`).join('')}
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                        ${hasMore ? `<div style="margin-top: 10px; text-align: center; color: var(--text-secondary); font-size: 0.9em;">... and ${results.length - 10} more rows</div>` : ''}
+                    `;
+                } else if (typeof results === 'number') {
+                    html += `
+                        <div style="padding: 10px; background: var(--bg-primary); border-radius: 4px;">
+                            <strong>${results}</strong> rows affected
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div style="padding: 10px; background: var(--bg-primary); border-radius: 4px;">
+                            ${escapeHtml(String(results))}
+                        </div>
+                    `;
+                }
+            } else {
+                html += `
+                    <div style="padding: 10px; background: var(--bg-primary); border-radius: 4px; color: var(--text-secondary);">
+                        Query executed successfully (no results to display)
                     </div>
                 `;
             }
