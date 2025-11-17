@@ -179,36 +179,135 @@ function buildInteractionSteps(data) {
             <div class="interaction-steps">
     `;
 
-    // Build step-by-step view based on intermediate steps
-    const steps = data.intermediate_steps || [];
+    // Show relevant columns
+    if (hasColumns) {
+        const topColumns = data.relevant_columns.slice(0, 5);
+        const hasMore = data.relevant_columns.length > 5;
 
-    steps.forEach((step, index) => {
-        const stepContent = step.step || step.output || '';
-        const stepNum = index + 1;
+        html += `
+            <div class="step">
+                <span class="step-tool">🎯 Relevant Columns Found</span>
+                <div class="step-content">
+                    <span class="step-badge">${data.relevant_columns.length} total columns</span>
+                    ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px;">(showing top 5)</span>` : ''}
+                </div>
+                <table class="step-table">
+                    <thead>
+                        <tr>
+                            <th>Table</th>
+                            <th>Column</th>
+                            <th>Similarity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${topColumns.map(col => `
+                            <tr>
+                                <td>${escapeHtml(col.table_name || '')}</td>
+                                <td>${escapeHtml(col.column_name || '')}</td>
+                                <td>${(col.similarity || 0).toFixed(3)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 5 of ${data.relevant_columns.length} columns')">View All ${data.relevant_columns.length} Columns</button>` : ''}
+            </div>
+        `;
+    }
 
-        // Determine step type and show corresponding data
-        if (stepContent.includes('Plan:') || stepContent.includes('Required actions:')) {
-            // Planning step
-            html += buildPlanningStep(stepNum, data.plan, stepContent);
-        } else if (stepContent.includes('relevant columns')) {
-            // Column search step
-            html += buildColumnStep(stepNum, data.relevant_columns);
-        } else if (stepContent.includes('relevant values')) {
-            // Value search step
-            html += buildValueStep(stepNum, data.relevant_values);
-        } else if (stepContent.includes('join paths') || stepContent.includes('path')) {
-            // Path finding step
-            html += buildPathStep(stepNum, data.join_paths);
-        } else if (stepContent.includes('Generated SQL')) {
-            // SQL generation step
-            const sqlMatch = stepContent.match(/Generated SQL.*?:\s*(.+)/);
-            const sql = sqlMatch ? sqlMatch[1] : '';
-            html += buildSQLStep(stepNum, sql);
-        } else {
-            // Generic step
-            html += buildGenericStep(stepNum, stepContent);
-        }
-    });
+    // Show relevant values
+    if (hasValues) {
+        const topValues = data.relevant_values.slice(0, 3);
+        const hasMore = data.relevant_values.length > 3;
+
+        html += `
+            <div class="step">
+                <span class="step-tool">🔎 Relevant Values Found</span>
+                <div class="step-content">
+                    <span class="step-badge">${data.relevant_values.length} total values</span>
+                    ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px;">(showing top 3)</span>` : ''}
+                </div>
+                <table class="step-table">
+                    <thead>
+                        <tr>
+                            <th>Table</th>
+                            <th>Column</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${topValues.map(val => `
+                            <tr>
+                                <td>${escapeHtml(val.table_name || '')}</td>
+                                <td>${escapeHtml(val.column_name || '')}</td>
+                                <td>${escapeHtml(String(val.value || ''))}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 3 of ${data.relevant_values.length} values')">View All ${data.relevant_values.length} Values</button>` : ''}
+            </div>
+        `;
+    }
+
+    // Show join paths
+    if (hasPaths) {
+        const topPaths = data.join_paths.slice(0, 3);
+        const hasMore = data.join_paths.length > 3;
+
+        html += `
+            <div class="step">
+                <span class="step-tool">🔗 Join Paths Found</span>
+                <div class="step-content">
+                    <span class="step-badge">${data.join_paths.length} total paths</span>
+                    ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px;">(showing top 3)</span>` : ''}
+                </div>
+                <table class="step-table">
+                    <thead>
+                        <tr>
+                            <th>Path</th>
+                            <th>Tables</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${topPaths.map(path => `
+                            <tr>
+                                <td>
+                                    <div class="step-path">
+                                        ${escapeHtml(path.path ? path.path.join(' → ') : 'N/A')}
+                                    </div>
+                                </td>
+                                <td>${path.path ? path.path.length : 0}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                ${hasMore ? `<button class="show-more-btn" onclick="alert('Showing top 3 of ${data.join_paths.length} paths')">View All ${data.join_paths.length} Paths</button>` : ''}
+            </div>
+        `;
+    }
+
+    // Show text-based intermediate steps
+    if (hasSteps) {
+        html += `
+            <div class="step">
+                <span class="step-tool">📝 Processing Steps</span>
+                <div class="step-content">
+        `;
+
+        data.intermediate_steps.forEach((step, index) => {
+            html += `
+                <div style="margin: 8px 0; padding: 8px; background: var(--code-bg); border-radius: 4px;">
+                    <strong style="color: var(--secondary-color);">Step ${index + 1}:</strong>
+                    ${escapeHtml(String(step.step || step.output || ''))}
+                </div>
+            `;
+        });
+
+        html += `
+                </div>
+            </div>
+        `;
+    }
 
     html += `
             </div>
@@ -216,173 +315,6 @@ function buildInteractionSteps(data) {
     `;
 
     return html;
-}
-
-// Helper function to build planning step
-function buildPlanningStep(stepNum, plan, fullContent) {
-    return `
-        <details class="step" style="margin: 10px 0; border: 1px solid var(--border-color); border-radius: 4px;">
-            <summary style="cursor: pointer; padding: 12px; font-weight: 600; background: var(--card-bg);">
-                <span style="color: var(--secondary-color);">Step ${stepNum}: 📋 Planning</span>
-            </summary>
-            <div style="padding: 12px; background: var(--bg-primary);">
-                <div style="margin-bottom: 8px;">
-                    <strong>Plan:</strong>
-                    <p style="margin: 4px 0; padding: 8px; background: var(--code-bg); border-radius: 4px;">
-                        ${escapeHtml(plan || fullContent)}
-                    </p>
-                </div>
-            </div>
-        </details>
-    `;
-}
-
-// Helper function to build column search step
-function buildColumnStep(stepNum, columns) {
-    if (!columns || columns.length === 0) {
-        return buildGenericStep(stepNum, 'Column search completed - no columns found');
-    }
-
-    const topColumns = columns.slice(0, 4);
-    const hasMore = columns.length > 4;
-
-    return `
-        <details class="step" style="margin: 10px 0; border: 1px solid var(--border-color); border-radius: 4px;">
-            <summary style="cursor: pointer; padding: 12px; font-weight: 600; background: var(--card-bg);">
-                <span style="color: var(--secondary-color);">Step ${stepNum}: 🎯 Relevant Columns</span>
-                <span class="step-badge" style="margin-left: 10px; font-weight: normal;">${columns.length} found</span>
-                ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px; font-weight: normal; font-size: 0.9em;">(showing top 4)</span>` : ''}
-            </summary>
-            <div style="padding: 12px; background: var(--bg-primary);">
-                <table class="step-table" style="width: 100%; border-collapse: collapse;">
-                    <thead>
-                        <tr style="background: var(--code-bg); text-align: left;">
-                            <th style="padding: 8px; border: 1px solid var(--border-color);">Table</th>
-                            <th style="padding: 8px; border: 1px solid var(--border-color);">Column</th>
-                            <th style="padding: 8px; border: 1px solid var(--border-color);">Type</th>
-                            <th style="padding: 8px; border: 1px solid var(--border-color);">Similarity</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${topColumns.map(col => `
-                            <tr>
-                                <td style="padding: 8px; border: 1px solid var(--border-color);">${escapeHtml(col.table_name || '')}</td>
-                                <td style="padding: 8px; border: 1px solid var(--border-color);"><strong>${escapeHtml(col.column_name || '')}</strong></td>
-                                <td style="padding: 8px; border: 1px solid var(--border-color); font-size: 0.9em; color: var(--text-secondary);">${escapeHtml(col.data_type || '')}</td>
-                                <td style="padding: 8px; border: 1px solid var(--border-color);">${(col.similarity || 0).toFixed(3)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-                ${hasMore ? `<div style="margin-top: 8px; text-align: center; color: var(--text-secondary); font-size: 0.9em;">... and ${columns.length - 4} more columns</div>` : ''}
-            </div>
-        </details>
-    `;
-}
-
-// Helper function to build value search step
-function buildValueStep(stepNum, values) {
-    if (!values || values.length === 0) {
-        return buildGenericStep(stepNum, 'Value search completed - no values found');
-    }
-
-    const topValues = values.slice(0, 3);
-    const hasMore = values.length > 3;
-
-    return `
-        <details class="step" style="margin: 10px 0; border: 1px solid var(--border-color); border-radius: 4px;">
-            <summary style="cursor: pointer; padding: 12px; font-weight: 600; background: var(--card-bg);">
-                <span style="color: var(--secondary-color);">Step ${stepNum}: 🔎 Relevant Values</span>
-                <span class="step-badge" style="margin-left: 10px; font-weight: normal;">${values.length} found</span>
-                ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px; font-weight: normal; font-size: 0.9em;">(showing top 3)</span>` : ''}
-            </summary>
-            <div style="padding: 12px; background: var(--bg-primary);">
-                <table class="step-table" style="width: 100%; border-collapse: collapse;">
-                    <thead>
-                        <tr style="background: var(--code-bg); text-align: left;">
-                            <th style="padding: 8px; border: 1px solid var(--border-color);">Table</th>
-                            <th style="padding: 8px; border: 1px solid var(--border-color);">Column</th>
-                            <th style="padding: 8px; border: 1px solid var(--border-color);">Value</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${topValues.map(val => `
-                            <tr>
-                                <td style="padding: 8px; border: 1px solid var(--border-color);">${escapeHtml(val.table_name || '')}</td>
-                                <td style="padding: 8px; border: 1px solid var(--border-color);"><strong>${escapeHtml(val.column_name || '')}</strong></td>
-                                <td style="padding: 8px; border: 1px solid var(--border-color); background: var(--code-bg);">${escapeHtml(String(val.value || ''))}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-                ${hasMore ? `<div style="margin-top: 8px; text-align: center; color: var(--text-secondary); font-size: 0.9em;">... and ${values.length - 3} more values</div>` : ''}
-            </div>
-        </details>
-    `;
-}
-
-// Helper function to build path finding step
-function buildPathStep(stepNum, paths) {
-    if (!paths || paths.length === 0) {
-        return buildGenericStep(stepNum, 'Path finding completed - no paths found');
-    }
-
-    const topPaths = paths.slice(0, 3);
-    const hasMore = paths.length > 3;
-
-    return `
-        <details class="step" style="margin: 10px 0; border: 1px solid var(--border-color); border-radius: 4px;">
-            <summary style="cursor: pointer; padding: 12px; font-weight: 600; background: var(--card-bg);">
-                <span style="color: var(--secondary-color);">Step ${stepNum}: 🔗 Join Paths</span>
-                <span class="step-badge" style="margin-left: 10px; font-weight: normal;">${paths.length} found</span>
-                ${hasMore ? `<span style="color: var(--text-secondary); margin-left: 10px; font-weight: normal; font-size: 0.9em;">(showing top 3)</span>` : ''}
-            </summary>
-            <div style="padding: 12px; background: var(--bg-primary);">
-                ${topPaths.map((path, idx) => `
-                    <div style="margin: 8px 0; padding: 10px; background: var(--code-bg); border-radius: 4px; border-left: 3px solid var(--secondary-color);">
-                        <strong style="color: var(--secondary-color);">✓ Path ${idx + 1}:</strong>
-                        ${path.path && path.path.length > 0
-                            ? `<div style="margin-top: 4px; font-family: monospace; font-size: 0.95em;">${escapeHtml(path.path[0])} → ${escapeHtml(path.path[path.path.length - 1])}</div>`
-                            : '<div style="margin-top: 4px; color: var(--text-secondary);">No path found</div>'
-                        }
-                        ${path.full_path
-                            ? `<div style="margin-top: 6px; font-size: 0.85em; color: var(--text-secondary); font-family: monospace; white-space: pre-wrap;">${escapeHtml(path.full_path)}</div>`
-                            : ''
-                        }
-                    </div>
-                `).join('')}
-                ${hasMore ? `<div style="margin-top: 8px; text-align: center; color: var(--text-secondary); font-size: 0.9em;">... and ${paths.length - 3} more paths</div>` : ''}
-            </div>
-        </details>
-    `;
-}
-
-// Helper function to build SQL generation step
-function buildSQLStep(stepNum, sql) {
-    return `
-        <details class="step" style="margin: 10px 0; border: 1px solid var(--border-color); border-radius: 4px;">
-            <summary style="cursor: pointer; padding: 12px; font-weight: 600; background: var(--card-bg);">
-                <span style="color: var(--secondary-color);">Step ${stepNum}: 💡 SQL Generation</span>
-            </summary>
-            <div style="padding: 12px; background: var(--bg-primary);">
-                <pre style="background: var(--code-bg); padding: 12px; border-radius: 4px; overflow-x: auto;">${escapeHtml(sql)}</pre>
-            </div>
-        </details>
-    `;
-}
-
-// Helper function to build generic step
-function buildGenericStep(stepNum, content) {
-    return `
-        <details class="step" style="margin: 10px 0; border: 1px solid var(--border-color); border-radius: 4px;">
-            <summary style="cursor: pointer; padding: 12px; font-weight: 600; background: var(--card-bg);">
-                <span style="color: var(--secondary-color);">Step ${stepNum}: 📝 Processing</span>
-            </summary>
-            <div style="padding: 12px; background: var(--bg-primary);">
-                <p style="margin: 0;">${escapeHtml(content)}</p>
-            </div>
-        </details>
-    `;
 }
 
 // Set processing state
